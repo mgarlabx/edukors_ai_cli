@@ -28,7 +28,7 @@ The Agent SDK installs a bundled Claude Code as an optional dependency (`@anthro
 | Discovery | `claude` on PATH, common install dirs, `~/.claude/local`, login shell; `EDUKORS_CLAUDE` or the `executable` option overrides; Windows `.cmd` shim resolved to `claude.exe`/`cli.js` | Offline; real CLI (macOS) |
 | Account isolation | `CLAUDE_CONFIG_DIR` = the account's managed directory. On macOS, Claude Code keys its Keychain entry by that directory (`Claude Code-credentials-<sha256(dir)[0:8]>`, as found in the Slides editor) | **Live**: two accounts with different identities ran at the same time on the same document id, each process reporting its own account; signing one out left the other connected; the user's own `~/.claude` sign-in stayed unchanged throughout, including when one test account used the same identity |
 | Inherited credentials | Allowlisted environment; `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CONFIG_DIR` etc. never inherited | Offline |
-| Sign-in | `claude auth login --claudeai` (browser), up to 10 min, cancellable | **Live**: works without a terminal; the browser opens and the command returns when the sign-in completes. The browser reuses a signed-in claude.ai session, so choosing another identity means signing out there first. **Gap:** when the browser does not open, Claude Code prints a URL whose flow ends in a code to paste into the terminal; the adapter has no stdin channel for it yet (see below) |
+| Sign-in | `claude auth login --claudeai`, run with its input open. It honors `BROWSER`, and prints two addresses: the one it opens returns to a `localhost` callback and finishes on its own; the printed one (`redirect_uri=platform.claude.com/oauth/code/callback`) ends on a page showing a code (`<code>#<state>`), which the command reads from its input. The adapter offers the printed address through `onLogin` (`acceptsCode: true`) and writes the code passed to `submitLoginCode` | **Live**, both paths without a terminal: browser callback (accounts A, B) and pasted code with `BROWSER=/usr/bin/true` (account C). The browser reuses a signed-in claude.ai session, so choosing another identity means signing out there first; a browser not signed in first goes through claude.ai's own e-mail sign-in, whose 6-digit verification code belongs on that page, not in the application |
 | Status (no model call) | `claude auth status --json`: exits 1 when signed out, still printing JSON (`loggedIn`); signed in, `email`, `orgName`, `subscriptionType` | **Live** |
 | Sign-out | `claude auth logout` | **Live** (the other account stayed connected) |
 | Models | `initializationResult().models` from a query with no prompt | Real CLI, signed out (`default, opus, fable, sonnet, haiku`) |
@@ -50,7 +50,7 @@ The Agent SDK installs a bundled Claude Code as an optional dependency (`@anthro
 | Discovery | `codex` on PATH, common install dirs, login shell; `EDUKORS_CODEX` or the `executable` option overrides | Offline; real CLI (macOS) |
 | Account isolation | `CODEX_HOME` = the account's managed directory; Codex keeps `auth.json` there. The user's `~/.codex` is never read or copied (the Graph editor copied `auth.json`; the plan forbids it) | Offline. **Live: pending** (two accounts at once; whether a keyring credential store changes this) |
 | Inherited credentials | Allowlisted environment; `OPENAI_API_KEY`, `CODEX_HOME` etc. never inherited | Offline |
-| Sign-in | `codex login` (browser), up to 10 min, cancellable | Offline. **Live: pending**, including without a terminal |
+| Sign-in | `codex login` (browser, local callback on port 1455). The address it prints when the browser does not open is offered through `onLogin` with `acceptsCode: false`: it completes in the browser too | Offline. **Live: pending**, including without a terminal |
 | Status (no model call) | `codex login status`: exit 0 signed in; exit 1 and "Not logged in" signed out | Real CLI, signed out. No identity: the command does not print one |
 | Sign-out | `codex logout` | Offline |
 | Models | `model/list` on a short-lived app server; hidden models filtered | Real CLI, signed out |
@@ -83,9 +83,9 @@ The experimental API also lets a client pass tools directly (`dynamicTools` on `
 | macOS (Apple Silicon) | Offline suite; real CLIs signed out |
 | macOS (Intel), Windows, Linux | Not run. Windows-specific code (PATHEXT, `.cmd` shims, `taskkill`, case-insensitive environment) exists but is untested |
 
-## Open issues
+## Sign-in in the application
 
-- **Claude sign-in without a browser.** When the browser does not open, `claude auth login` prints an authorization URL whose flow ends in a code to paste into the terminal (`Paste code here if prompted >`). The adapter starts the command without a terminal, so that path cannot finish. The fix is a sign-in flow that hands the URL to the application and accepts the pasted code; it needs an extension of `connectAccount`.
+`connectAccount(id, { onLogin })` calls `onLogin({ url, acceptsCode })` as soon as the provider prints its sign-in address; the stdio host sends it as `{ login: { requestId, accountId, url, acceptsCode } }`. An editor shows the address as a fallback ("If the browser did not open…"). With `acceptsCode`, it also shows a field whose value goes to `submitLoginCode(id, code)` (host: `accounts.submitCode`). The field should say which code it wants: the long code shown after **Authorize**, not the 6-digit code claude.ai may e-mail for its own sign-in.
 
 ## Live checks
 

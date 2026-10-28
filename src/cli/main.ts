@@ -92,7 +92,7 @@ async function main(): Promise<void> {
       await ai.removeAccount((await findAccount(args[0])).id, { deleteData: values["delete-data"] });
       return print("Removed. Other EDUKORS applications on this computer no longer list it.");
     case "connect":
-      return print(await ai.connectAccount((await findAccount(args[0])).id));
+      return connect((await findAccount(args[0])).id);
     case "status":
       return print(await ai.accountStatus((await findAccount(args[0])).id));
     case "logout":
@@ -107,6 +107,36 @@ async function main(): Promise<void> {
     default:
       console.error(USAGE);
       process.exitCode = 2;
+  }
+}
+
+/**
+ * Signs in. The browser normally finishes on its own; when it does not open,
+ * the address is shown here and, for providers that end with a code, the code
+ * typed (or piped) on the next line is passed on.
+ */
+async function connect(accountId: string): Promise<void> {
+  let rl: ReturnType<typeof createInterface> | null = null;
+  try {
+    const status = await ai.connectAccount(accountId, {
+      onLogin: ({ url, acceptsCode }) => {
+        console.error(`\nIf the browser did not open, sign in at:\n${url}\n`);
+        if (!acceptsCode) return;
+        rl = createInterface({ input: process.stdin, output: process.stderr, terminal: process.stdin.isTTY });
+        rl.setPrompt("Paste the code shown after signing in (or finish in the browser): ");
+        rl.prompt();
+        rl.once("line", (line) => {
+          try {
+            if (line.trim()) ai.submitLoginCode(accountId, line);
+          } catch (e) {
+            console.error(isAiCliError(e) ? `[${e.code}] ${e.message}` : String(e));
+          }
+        });
+      },
+    });
+    print(status);
+  } finally {
+    (rl as ReturnType<typeof createInterface> | null)?.close();
   }
 }
 

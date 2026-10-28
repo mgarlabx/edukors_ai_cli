@@ -63,6 +63,20 @@ export interface SessionOptions {
   effort?: string;
 }
 
+/** An address the user can open to sign in, offered while a sign-in runs. */
+export interface LoginPrompt {
+  url: string;
+  /** The page ends with a code the user pastes back (see `AiCli.submitLoginCode`). */
+  acceptsCode: boolean;
+}
+
+/** How a sign-in reaches the user while it runs. Present only during `connectAccount`. */
+export interface LoginChannel {
+  prompt(prompt: LoginPrompt): void;
+  /** Resolves with the code the user pasted; rejects if the sign-in is cancelled. */
+  code(): Promise<string>;
+}
+
 /** What an adapter receives for anything account-related. */
 export interface AccountContext {
   accountId: string;
@@ -72,6 +86,7 @@ export interface AccountContext {
   detection: Detection;
   log: ScopedLog;
   signal?: AbortSignal;
+  login?: LoginChannel;
 }
 
 export interface SessionContext extends AccountContext {

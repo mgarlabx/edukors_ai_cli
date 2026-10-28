@@ -8,7 +8,7 @@ import { Diagnostics, type DiagnosticEntry, type LogSink } from "./diagnostics.j
 import { DataPaths, defaultDataDir } from "./platform/paths.js";
 import { AccountRegistry, type AccountRecord } from "./registry/registry.js";
 import { KeyedMutex, withLock } from "./registry/lock.js";
-import type { AccountContext, AccountStatus, Capabilities, Detection, ModelInfo, ProviderAdapter, SessionOptions } from "./provider.js";
+import type { AccountContext, AccountStatus, Capabilities, Detection, LoginChannel, LoginPrompt, ModelInfo, ProviderAdapter, SessionOptions } from "./provider.js";
 import { AiSession } from "./session.js";
 import { assertToolNames, toolSpec, type ToolDefinition } from "./tools.js";
 import { redactValue } from "./redact.js";
@@ -77,6 +77,8 @@ export class AiCli {
   private readonly openSessions = new Map<string, AiSession>();
   private readonly listeners = new Set<AiEventListener>();
   private readonly authMutex = new KeyedMutex();
+  /** Sign-ins in progress in this process, by account, waiting for a pasted code or not. */
+  private readonly logins = new Map<string, { submit?: (code: string) => void }>();
   private readonly log;
   private seq = 0;
   private disposed = false;
@@ -188,14 +190,50 @@ export class AiCli {
    * Starts the provider's sign-in flow for this account. Sign-ins to the same
    * provider are serialized, in this process and across EDUKORS applications.
    */
-  async connectAccount(accountId: string, options: { signal?: AbortSignal } = {}): Promise<AccountStatus> {
+  async connectAccount(accountId: string, options: { signal?: AbortSignal; onLogin?: (prompt: LoginPrompt) => void } = {}): Promise<AccountStatus> {
     const { adapter, context } = await this.accountContext(accountId, options.signal);
-    return this.authMutex.run(adapter.id, () =>
-      withLock(join(this.paths.locksDir, `auth-${adapter.id}.lock`), () => this.guard(adapter.connectAccount(context), "LOGIN_FAILED"), {
-        timeoutMs: this.options.authLockTimeoutMs ?? 5 * 60_000,
-        onTimeout: () => new AiCliError("TIMEOUT", "another EDUKORS application is signing in to this provider", { meta: { providerId: adapter.id } }),
-      }),
-    );
+    if (this.logins.has(accountId)) throw new AiCliError("SESSION_BUSY", "this account is already signing in", { meta: { accountId } });
+    const entry: { submit?: (code: string) => void } = {};
+    this.logins.set(accountId, entry);
+    const login: LoginChannel = {
+      prompt: (prompt) => {
+        this.log.info("sign-in address offered", { accountId, acceptsCode: prompt.acceptsCode });
+        try {
+          options.onLogin?.(prompt);
+        } catch (e) {
+          this.log.error("onLogin threw", e);
+        }
+      },
+      code: () =>
+        new Promise<string>((resolve, reject) => {
+          entry.submit = resolve;
+          if (options.signal?.aborted) reject(new AiCliError("CANCELLED", "sign-in cancelled"));
+          options.signal?.addEventListener("abort", () => reject(new AiCliError("CANCELLED", "sign-in cancelled")), { once: true });
+        }),
+    };
+    try {
+      return await this.authMutex.run(adapter.id, () =>
+        withLock(join(this.paths.locksDir, `auth-${adapter.id}.lock`), () => this.guard(adapter.connectAccount({ ...context, login }), "LOGIN_FAILED"), {
+          timeoutMs: this.options.authLockTimeoutMs ?? 5 * 60_000,
+          onTimeout: () => new AiCliError("TIMEOUT", "another EDUKORS application is signing in to this provider", { meta: { providerId: adapter.id } }),
+        }),
+      );
+    } finally {
+      this.logins.delete(accountId);
+    }
+  }
+
+  /**
+   * Hands the code the user pasted to a sign-in waiting for one (after an
+   * `onLogin` prompt with `acceptsCode`). The code is never logged.
+   */
+  submitLoginCode(accountId: string, code: string): void {
+    const clean = code.trim();
+    if (!clean || clean.length > 4096 || /[\r\n\0]/.test(clean)) throw new AiCliError("INVALID_ARGUMENT", "the code must be a single line of text");
+    const entry = this.logins.get(accountId);
+    if (!entry?.submit) throw new AiCliError("INVALID_ARGUMENT", "no sign-in is waiting for a code on this account", { meta: { accountId } });
+    entry.submit(clean);
+    entry.submit = undefined;
   }
 
   async accountStatus(accountId: string, options: { signal?: AbortSignal } = {}): Promise<AccountStatus> {

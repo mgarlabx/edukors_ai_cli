@@ -15,6 +15,10 @@ import { VERSION } from "../version.js";
  *   app → host   { id, method, params }          a request
  *   host → app   { id, result } | { id, error }  its answer
  *   host → app   { event }                        a normalized AiEvent
+ *   host → app   { login: { requestId, accountId, url, acceptsCode } }
+ *                a sign-in address for the user while accounts.connect runs;
+ *                with acceptsCode, the app collects the pasted code and sends
+ *                accounts.submitCode
  *   host → app   { id: "h:<n>", method: "tool.call", params }   the host asks the app to run a tool
  *   app → host   { id: "h:<n>", result } | { id: "h:<n>", error }
  *
@@ -38,6 +42,7 @@ const METHODS = {
   "accounts.rename": Account.extend({ label: z.string() }),
   "accounts.remove": Account.extend({ deleteData: z.boolean().optional() }),
   "accounts.connect": Account,
+  "accounts.submitCode": Account.extend({ code: z.string() }),
   "accounts.status": Account,
   "accounts.logout": Account,
   "models.list": Account,
@@ -137,11 +142,17 @@ export function runStdioHost({ ai, input, output, toolTimeoutMs = 120_000 }: Std
         const controller = new AbortController();
         aborts.set(id, controller);
         try {
-          return await ai.connectAccount(p.accountId, { signal: controller.signal });
+          return await ai.connectAccount(p.accountId, {
+            signal: controller.signal,
+            onLogin: (prompt) => write({ login: { requestId: id, accountId: p.accountId, ...prompt } }),
+          });
         } finally {
           aborts.delete(id);
         }
       }
+      case "accounts.submitCode":
+        ai.submitLoginCode(p.accountId, p.code);
+        return null;
       case "accounts.status":
         return ai.accountStatus(p.accountId);
       case "accounts.logout":

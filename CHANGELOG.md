@@ -11,3 +11,5 @@
 - Claude adapter (Agent SDK driving the user's `claude`, one `CLAUDE_CONFIG_DIR` per account, in-process MCP tools, `AskUserQuestion` only by default).
 - Codex adapter (`codex app-server`, one `CODEX_HOME` per account, tools over an authenticated 127.0.0.1 MCP bridge passed with `-c`, commands declined, skills off).
 - Compatibility matrix (`docs/compatibility.md`).
+- Sign-in without a working browser: `connectAccount` reports the provider's sign-in address through `onLogin`, and `submitLoginCode` passes a pasted code to the waiting CLI (host: `login` message and `accounts.submitCode`; terminal: `edukors-ai connect` asks for the code).
+- Usage reports every limit window (`windows`), the most used one as `limitUsed`.

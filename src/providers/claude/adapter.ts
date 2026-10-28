@@ -9,6 +9,7 @@ import type { ScopedLog } from "../../diagnostics.js";
 import { createToolMcpServer, TOOL_SERVER_NAME } from "../../mcp/toolServer.js";
 import { compareVersions, findExecutable, readVersion } from "../../platform/discovery.js";
 import { buildEnv } from "../../platform/env.js";
+import { runLoginCommand } from "../../platform/login.js";
 import { runCommand } from "../../platform/process.js";
 import type {
   AccountContext,
@@ -58,6 +59,9 @@ export interface ClaudeProviderOptions {
 export interface ClaudeSdk {
   query(params: { prompt: AsyncIterable<SDKUserMessage>; options?: Options }): Query;
 }
+
+/** The address `claude auth login` prints for signing in without the browser it tried to open. */
+const LOGIN_URL = /https:\/\/\S+\/oauth\/authorize\S*/;
 
 /** Older builds miss parts of the protocol used here (effort, partial messages, auth status). */
 const MIN_VERSION = "2.1.0";
@@ -202,10 +206,11 @@ export function createClaudeProvider(options: ClaudeProviderOptions = {}): Provi
     capabilities: () => capabilities,
 
     async connectAccount(context): Promise<AccountStatus> {
-      // Opens the browser; Claude Code waits for the sign-in to finish.
-      const result = await cli(context, ["auth", "login", "--claudeai"], 10 * 60_000);
+      // Opens the browser and waits. Without one, the address it prints ends in a
+      // code the user pastes; the application relays it to the command's input.
+      const result = await runLoginCommand({ file: context.detection.executable!, args: ["auth", "login", "--claudeai"], env: env(context) }, context, { urlPattern: LOGIN_URL, acceptsCode: true });
       if (result.timedOut) throw new AiCliError("TIMEOUT", "sign-in did not finish in time");
-      if (result.code !== 0) throw new AiCliError("LOGIN_FAILED", "Claude sign-in failed", { meta: { detail: result.stderr.trim().slice(-300) } });
+      if (result.code !== 0) throw new AiCliError("LOGIN_FAILED", "Claude sign-in failed", { meta: { detail: (result.stderr.trim() || result.stdout.trim()).slice(-300) } });
       return this.accountStatus(context);
     },
 

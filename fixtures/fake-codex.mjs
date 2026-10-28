@@ -50,6 +50,9 @@ if (args[0] === "login") {
     console.error("login cancelled");
     process.exit(1);
   }
+  console.log("Starting local login server on http://localhost:1455.");
+  console.log("If your browser did not open, navigate to this URL to authenticate:\n");
+  console.log("https://auth.openai.com/oauth/authorize?response_type=code&client_id=fake-client&state=fake-state\n");
   writeFileSync(authFile, JSON.stringify({ tokens: { access_token: `fake-codex-token-${randomUUID()}` }, email: basename(HOME) }));
   console.log("Successfully logged in");
   process.exit(0);

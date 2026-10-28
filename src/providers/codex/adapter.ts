@@ -4,6 +4,7 @@ import type { ScopedLog } from "../../diagnostics.js";
 import { startToolBridge, TOOL_SERVER_NAME, type ToolBridge } from "../../mcp/toolServer.js";
 import { compareVersions, findExecutable, readVersion } from "../../platform/discovery.js";
 import { buildEnv } from "../../platform/env.js";
+import { runLoginCommand } from "../../platform/login.js";
 import { ManagedProcess, runCommand } from "../../platform/process.js";
 import type {
   AccountContext,
@@ -48,6 +49,8 @@ export interface CodexProviderOptions {
 /** The version this adapter's protocol use was checked against (docs/compatibility.md). */
 const MIN_VERSION = "0.164.0";
 const TOKEN_VAR = "EDUKORS_MCP_TOKEN";
+/** The address `codex login` prints for signing in when the browser does not open. */
+const LOGIN_URL = /https:\/\/\S+\/oauth\/authorize\S*/;
 
 const WINDOW_NAMES: Record<number, string> = { 300: "five_hour", 10080: "seven_day" };
 
@@ -148,10 +151,11 @@ export function createCodexProvider(options: CodexProviderOptions = {}): Provide
     capabilities: () => capabilities,
 
     async connectAccount(context): Promise<AccountStatus> {
-      // Opens the browser and waits for the ChatGPT sign-in to finish.
-      const result = await cli(context, ["login"], 10 * 60_000);
+      // Opens the browser and waits for the ChatGPT sign-in; the address it prints
+      // completes in the browser too, so there is no code to paste back.
+      const result = await runLoginCommand({ file: context.detection.executable!, args: ["login"], env: env(context) }, context, { urlPattern: LOGIN_URL, acceptsCode: false });
       if (result.timedOut) throw new AiCliError("TIMEOUT", "sign-in did not finish in time");
-      if (result.code !== 0) throw new AiCliError("LOGIN_FAILED", "Codex sign-in failed", { meta: { detail: result.stderr.trim().slice(-300) } });
+      if (result.code !== 0) throw new AiCliError("LOGIN_FAILED", "Codex sign-in failed", { meta: { detail: (result.stderr.trim() || result.stdout.trim()).slice(-300) } });
       return this.accountStatus(context);
     },
 

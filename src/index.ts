@@ -14,6 +14,8 @@ export type {
   Capabilities,
   Detection,
   DetectionStatus,
+  LoginChannel,
+  LoginPrompt,
   ModelInfo,
   ProviderAdapter,
   ProviderSession,
