@@ -7,6 +7,23 @@
   "engines": {
     "node": ">=22.12"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mgarlabx/edukors_ai_cli.git"
+  },
+  "homepage": "https://github.com/mgarlabx/edukors_ai_cli#readme",
+  "bugs": {
+    "url": "https://github.com/mgarlabx/edukors_ai_cli/issues"
+  },
+  "keywords": [
+    "edukors",
+    "claude",
+    "codex",
+    "ai",
+    "cli",
+    "agent",
+    "mcp"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -35,12 +52,16 @@
     "README.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "cli": "npm run build --silent && node dist/cli/main.js",
-    "prepare": "tsc -p tsconfig.build.json"
+    "prepare": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run typecheck && npm test"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.287",
