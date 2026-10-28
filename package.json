@@ -1,0 +1,48 @@
+{
+  "name": "@edukors/ai-cli",
+  "version": "0.1.0",
+  "description": "Shared integration between EDUKORS editors and installed AI provider CLIs: accounts, sessions, tools and normalized events.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
+    },
+    "./host": {
+      "types": "./dist/host/stdio.d.ts",
+      "import": "./dist/host/stdio.js"
+    }
+  },
+  "bin": {
+    "edukors-ai": "./dist/cli/main.js",
+    "edukors-ai-host": "./dist/host/main.js"
+  },
+  "files": [
+    "dist",
+    "fixtures",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cli": "npm run build --silent && node dist/cli/main.js"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.3"
+  }
+}
