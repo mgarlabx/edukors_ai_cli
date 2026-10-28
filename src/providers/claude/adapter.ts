@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CanUseTool, EffortLevel, Options, Query, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -7,6 +7,29 @@ import { z } from "zod";
 import { AiCliError, toAiCliError } from "../../errors.js";
 import type { ScopedLog } from "../../diagnostics.js";
 import { createToolMcpServer, TOOL_SERVER_NAME } from "../../mcp/toolServer.js";
+import { listSkills } from "../../skills.js";
+
+const PLUGIN_NAME = "edukors";
+
+/**
+ * The application's skills as a local Claude Code plugin, made in the
+ * session's work dir: a manifest and a link to the skills folder. Returns the
+ * plugin's path and the ids that enable those skills, and only those.
+ */
+function skillsPlugin(workDir: string, skillsDir: string): { path: string; ids: string[] } {
+  const path = join(workDir, ".edukors-plugin");
+  rmSync(path, { recursive: true, force: true });
+  mkdirSync(join(path, ".claude-plugin"), { recursive: true });
+  writeFileSync(join(path, ".claude-plugin", "plugin.json"), JSON.stringify({ name: PLUGIN_NAME, description: "Skills offered by the EDUKORS application." }) + "\n");
+  // A junction on Windows needs no privileges; elsewhere the type is ignored.
+  symlinkSync(skillsDir, join(path, "skills"), "junction");
+  const ids = new Set<string>();
+  for (const skill of listSkills(skillsDir)) {
+    ids.add(`${PLUGIN_NAME}:${skill.folder}`);
+    ids.add(`${PLUGIN_NAME}:${skill.name}`);
+  }
+  return { path, ids: [...ids] };
+}
 import { compareVersions, findExecutable, readVersion } from "../../platform/discovery.js";
 import { buildEnv } from "../../platform/env.js";
 import { runLoginCommand } from "../../platform/login.js";
@@ -276,13 +299,25 @@ class ClaudeSession implements ProviderSession {
     const sessionId = context.resumeId ?? randomUUID();
     const inbox = new Inbox();
     let session: ClaudeSession | null = null;
-    const server = createToolMcpServer(context.tools, (name, args) =>
-      session?.pending ? session.pending.sink.callTool(name, args) : Promise.resolve({ content: "No request is active.", isError: true }),
-    );
+    const idle = Promise.resolve({ content: "No request is active.", isError: true });
+    // In-process MCP servers: the application's tools, and each of the user's servers through the core.
+    const servers: NonNullable<Options["mcpServers"]> = {};
+    if (context.tools.length) {
+      const instance = createToolMcpServer(context.tools, (name, args) => (session?.pending ? session.pending.sink.callTool(name, args) : idle));
+      servers[TOOL_SERVER_NAME] = { type: "sdk", name: TOOL_SERVER_NAME, instance };
+    }
+    for (const external of context.externalServers) {
+      const instance = createToolMcpServer(external.tools, (name, args) => (session?.pending ? session.pending.sink.callExternal(external.name, name, args) : idle), external.name);
+      servers[external.name] = { type: "sdk", name: external.name, instance };
+    }
+    const plugin = context.skillsDir ? skillsPlugin(context.workDir, context.skillsDir) : null;
+    const served = Object.keys(servers);
 
-    // The one place that decides: the application's tools (which validate themselves), questions, nothing else.
+    // The one place that decides. The application's tools validate themselves and the
+    // user's servers are authorized by the core; loading a skill only reads its text.
     const canUseTool: CanUseTool = async (toolName, input) => {
-      if (toolName.startsWith(`mcp__${TOOL_SERVER_NAME}__`)) return { behavior: "allow", updatedInput: input };
+      if (served.some((name) => toolName.startsWith(`mcp__${name}__`))) return { behavior: "allow", updatedInput: input };
+      if (toolName === "Skill" && plugin) return { behavior: "allow", updatedInput: input };
       if (toolName === "AskUserQuestion") return session ? session.answerQuestions(input) : { behavior: "deny", message: "No request is active." };
       return { behavior: "deny", message: "This tool is not available here." };
     };
@@ -295,8 +330,9 @@ class ClaudeSession implements ProviderSession {
         ...(context.options.model ? { model: context.options.model } : {}),
         ...(context.options.effort ? { effort: context.options.effort as EffortLevel } : {}),
         ...(context.instructions ? { systemPrompt: context.instructions } : {}),
-        tools: opts.builtIns,
-        mcpServers: context.tools.length ? { [TOOL_SERVER_NAME]: { type: "sdk", name: TOOL_SERVER_NAME, instance: server } } : {},
+        tools: plugin ? [...opts.builtIns, "Skill"] : opts.builtIns,
+        mcpServers: servers,
+        ...(plugin ? { plugins: [{ type: "local" as const, path: plugin.path }], skills: plugin.ids } : {}),
         strictMcpConfig: true,
         settingSources: [],
         canUseTool,

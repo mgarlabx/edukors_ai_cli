@@ -6,6 +6,9 @@
 //
 // A turn depends on words in the request:
 //   tool <name> [<json>]  calls an application tool over MCP
+//   mcp <server> <tool> [<json>]  calls a tool of one of the user's servers, through the bridge
+//   skill <name> [<file>] reads a skill through read_skill
+//   developer             reports the developer instructions it was given
 //   ask                   asks the user as Codex 0.164 does: an async message
 //                         with questions, then sleeps until turn/steer answers
 //   ask-blocking          asks the user through item/tool/requestUserInput
@@ -19,7 +22,7 @@
 //
 // Toggles: FAKE_CODEX_VERSION, FAKE_CODEX_LOGIN=fail.
 import { createInterface } from "node:readline";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -76,7 +79,6 @@ for (let i = 0; i < args.length; i++)
     config[key] = JSON.parse(rest.join("="));
   }
 const mcpUrl = config["mcp_servers.edukors.url"];
-const mcpToken = process.env[config["mcp_servers.edukors.bearer_token_env_var"] ?? ""];
 
 const out = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
 const notify = (method, params) => out({ method, params });
@@ -89,15 +91,23 @@ const askClient = (method, params) =>
     out({ id, method, params });
   });
 
-let client = null;
-async function callTool(name, toolArgs) {
-  if (!client) {
-    client = new Client({ name: "fake-codex", version: "0.164.0" });
-    await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl), { requestInit: { headers: { Authorization: `Bearer ${mcpToken}` } } }));
+const clients = new Map();
+async function callTool(name, toolArgs, server = "edukors") {
+  if (!clients.has(server)) {
+    const url = config[`mcp_servers.${server}.url`];
+    const token = process.env[config[`mcp_servers.${server}.bearer_token_env_var`] ?? ""];
+    if (!url) return { text: `no MCP server ${server}`, isError: true };
+    const client = new Client({ name: "fake-codex", version: "0.164.0" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+    clients.set(server, client);
   }
-  const result = await client.callTool({ name, arguments: toolArgs });
+  const result = await clients.get(server).callTool({ name, arguments: toolArgs });
   return { text: (result.content ?? []).map((c) => c.text ?? "").join("\n"), isError: Boolean(result.isError) };
 }
+
+let extraRoots = [];
+const switchesFile = join(HOME, "skill-switches.json");
+const readSwitches = () => (existsSync(switchesFile) ? JSON.parse(readFileSync(switchesFile, "utf8")) : {});
 
 const threadsDir = join(HOME, "threads");
 mkdirSync(threadsDir, { recursive: true });
@@ -117,17 +127,26 @@ async function handle(msg) {
       return reply(id, { userAgent: "fake-codex/0.164.0" });
     case "account/read":
       return reply(id, existsSync(authFile) ? { account: { type: "chatgpt", email: basename(HOME), planType: "plus" }, requiresOpenaiAuth: true } : { account: null, requiresOpenaiAuth: true });
-    case "skills/list":
-      return reply(id, { data: [{ cwd: params.cwds?.[0], skills: [{ name: "imagegen", path: "/bundled/imagegen/SKILL.md", enabled: !existsSync(join(HOME, "skills-off.json")) }] }] });
+    case "skills/extraRoots/set":
+      extraRoots = params.extraRoots ?? [];
+      return reply(id, {});
+    case "skills/list": {
+      // A bundled skill, and those found in the extra roots; switches persist in the account's config.
+      const found = [{ name: "imagegen", path: "/bundled/imagegen/SKILL.md" }];
+      for (const root of extraRoots)
+        for (const entry of existsSync(root) ? readdirSync(root) : []) if (existsSync(join(root, entry, "SKILL.md"))) found.push({ name: entry, path: join(root, entry, "SKILL.md") });
+      const switches = readSwitches();
+      return reply(id, { data: [{ cwd: params.cwds?.[0], skills: found.map((sk) => ({ ...sk, enabled: switches[sk.path] ?? true })) }] });
+    }
     case "skills/config/write":
-      writeFileSync(join(HOME, "skills-off.json"), JSON.stringify(params));
+      writeFileSync(switchesFile, JSON.stringify({ ...readSwitches(), [params.path]: params.enabled }));
       return reply(id, {});
     case "model/list":
       return reply(id, { data: [{ id: "gpt-fake", displayName: "GPT Fake", isDefault: true, hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }] }, { id: "hidden", hidden: true }] });
     case "account/rateLimits/read":
       return reply(id, { rateLimits: { primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 2000000000 }, secondary: { usedPercent: 10, windowDurationMins: 10080 } } });
     case "thread/start":
-      thread = { id: randomUUID(), turns: [], instructions: params.baseInstructions ?? null, sandbox: params.sandbox, approvalPolicy: params.approvalPolicy };
+      thread = { id: randomUUID(), turns: [], instructions: params.baseInstructions ?? null, developer: params.developerInstructions ?? null, sandbox: params.sandbox, approvalPolicy: params.approvalPolicy };
       saveThread();
       return reply(id, { thread: { id: thread.id }, model: params.model ?? "gpt-fake" });
     case "thread/resume": {
@@ -181,6 +200,7 @@ async function runTurn(turn, text) {
 
   let answer;
   const tool = /\btool (\w+)(?: (\{.*\}))?/.exec(text);
+  const mcp = /\bmcp ([\w-]+) (\w+)(?: (\{.*\}))?/.exec(text);
   if (/crash/.test(text)) {
     say("about to crash");
     await sleep(20);
@@ -188,6 +208,16 @@ async function runTurn(turn, text) {
   } else if (/limit/.test(text)) {
     notify("error", { ...base, willRetry: false, error: { message: "You've hit your usage limit", codexErrorInfo: "usageLimitExceeded" } });
     return end("failed", { message: "You've hit your usage limit", codexErrorInfo: "usageLimitExceeded" });
+  } else if (/^skill /.test(text)) {
+    const [, name, file] = text.split(" ");
+    const result = await callTool("read_skill", { skill: name, ...(file ? { file } : {}) });
+    answer = `${result.isError ? "error: " : ""}${result.text}`;
+  } else if (/^developer$/.test(text)) {
+    answer = thread.developer ?? "none";
+  } else if (mcp) {
+    notify("item/started", { ...base, item: { id: "m", type: "mcpToolCall", server: mcp[1], tool: mcp[2] } });
+    const result = await callTool(mcp[2], mcp[3] ? JSON.parse(mcp[3]) : {}, mcp[1]);
+    answer = `${mcp[1]}.${mcp[2]} said: ${result.text}${result.isError ? " (error)" : ""}`;
   } else if (tool) {
     notify("item/started", { ...base, item: { id: "t", type: "mcpToolCall", server: "edukors", tool: tool[1] } });
     const result = await callTool(tool[1], tool[2] ? JSON.parse(tool[2]) : {});

@@ -89,6 +89,13 @@ export interface AccountContext {
   login?: LoginChannel;
 }
 
+/** One of the user's MCP servers, already connected by the library, as a provider offers it. */
+export interface ExternalServer {
+  /** Letters, digits, `_` and `-`: the name the model sees (`mcp__<name>__<tool>`). */
+  name: string;
+  tools: ToolSpec[];
+}
+
 export interface SessionContext extends AccountContext {
   appId: string;
   documentId: string;
@@ -96,6 +103,10 @@ export interface SessionContext extends AccountContext {
   workDir: string;
   instructions: string;
   tools: ToolSpec[];
+  /** The user's MCP servers; calls to them go through `TurnSink.callExternal`. */
+  externalServers: ExternalServer[];
+  /** A folder of skills (`<name>/SKILL.md`) the application offers; no other skill is enabled. */
+  skillsDir?: string;
   options: SessionOptions;
   /** The provider's own session identifier to resume, when the capability allows it. */
   resumeId?: string;
@@ -124,6 +135,8 @@ export interface TurnSink {
   activity(phase: ActivityPhase, detail?: string): void;
   usage(usage: Omit<Usage, "observedAt"> & { observedAt?: string }): void;
   callTool(name: string, args: unknown): Promise<ToolResult>;
+  /** A tool of one of the user's MCP servers, authorized by the application first. */
+  callExternal(server: string, tool: string, args: unknown): Promise<ToolResult>;
   ask(question: { prompt: string; options?: string[] }): Promise<string>;
 }
 

@@ -40,6 +40,27 @@ interface Turn {
   settle: () => void;
 }
 
+/** What the application decides about a call to one of the user's MCP servers. */
+export interface AuthorizationRequest {
+  kind: "mcp";
+  server: string;
+  tool: string;
+  input: Record<string, unknown>;
+  documentId: string;
+  requestId: string;
+  signal: AbortSignal;
+}
+
+export type AuthorizationDecision = { allow: true } | { allow: false; message?: string };
+
+export type Authorizer = (request: AuthorizationRequest) => Promise<AuthorizationDecision> | AuthorizationDecision;
+
+/** The user's MCP servers as the session reaches them (see mcp/external.ts). */
+export interface ExternalCaller {
+  has(server: string, tool: string): boolean;
+  call(server: string, tool: string, args: Record<string, unknown>): Promise<ToolResult>;
+}
+
 export interface SessionDeps {
   adapter: ProviderAdapter;
   capabilities: Capabilities;
@@ -47,6 +68,9 @@ export interface SessionDeps {
   /** Builds a fresh provider context (account home, work dir, tools). */
   context: () => Promise<SessionContext>;
   tools: ReadonlyMap<string, ToolDefinition>;
+  external?: ExternalCaller;
+  /** Without one, every call to a user's MCP server is denied. */
+  authorize?: Authorizer;
   options: SessionOptions;
   publish: (event: Omit<AiEvent, "seq" | "at">) => AiEvent;
   log: ScopedLog;
@@ -277,6 +301,7 @@ export class AiSession {
       activity: (phase, detail) => (live() ? this.emit({ type: "activity", phase, ...(detail ? { detail } : {}) }, turn.requestId) : drop("activity")),
       usage: (usage) => (live() ? this.emit({ type: "usageUpdated", usage: { ...usage, observedAt: usage.observedAt ?? new Date().toISOString() } }, turn.requestId) : drop("usage")),
       callTool: (name, args) => this.callTool(turn, live, name, args),
+      callExternal: (server, tool, args) => this.callExternal(turn, live, server, tool, args),
       ask: (question) => {
         if (!live()) {
           drop("question");
@@ -321,6 +346,40 @@ export class AiSession {
       this.deps.log.warn(`tool ${name} threw`, e);
       return fail(e instanceof AiCliError ? e.code : "TOOL_FAILED", `Tool ${name} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  private async callExternal(turn: Turn, live: () => boolean, server: string, tool: string, args: unknown): Promise<ToolResult> {
+    if (!live()) {
+      this.droppedEvents++;
+      return { content: "The request was cancelled; the tool was not run.", isError: true };
+    }
+    const callId = randomUUID();
+    const name = `mcp__${server}__${tool}`;
+    this.emit({ type: "toolStarted", callId, tool: name }, turn.requestId);
+    const fail = (code: string, message: string): ToolResult => {
+      this.emit({ type: "toolCompleted", callId, tool: name, ok: false, errorCode: code }, turn.requestId);
+      return { content: message, isError: true };
+    };
+    if (!this.deps.external?.has(server, tool)) return fail("TOOL_NOT_FOUND", `Unknown tool: ${name}`);
+    const input = args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+    try {
+      const decision = this.deps.authorize
+        ? await this.deps.authorize({ kind: "mcp", server, tool, input, documentId: this.documentId, requestId: turn.requestId, signal: turn.abort.signal })
+        : ({ allow: false, message: "This application does not allow calls to MCP servers." } as const);
+      if (!decision.allow) return fail("TOOL_DENIED", decision.message || "The user declined this action.");
+      if (!live()) return fail("CANCELLED", "The request was cancelled; the tool was not run.");
+      const result = await this.deps.external.call(server, tool, input);
+      this.emit({ type: "toolCompleted", callId, tool: name, ok: !result.isError, ...(result.isError ? { errorCode: "TOOL_FAILED" } : {}) }, turn.requestId);
+      return result;
+    } catch (e) {
+      this.deps.log.warn(`MCP tool ${name} failed`, e);
+      return fail("TOOL_FAILED", `${name} failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** Reports the user's MCP servers once the session is open. */
+  reportServers(statuses: { server: string; status: "connected" | "failed"; tools?: number; error?: string }[]): void {
+    for (const s of statuses) this.emit({ type: "mcpServerStatus", ...s });
   }
 
   private emit(body: AiEventBody, requestId?: string): void {

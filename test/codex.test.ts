@@ -83,7 +83,7 @@ describe("codex: sessions", () => {
       await session.send("env", { requestId: "e" });
       expect(textOf(s.events, "e")).toBe(`OPENAI_API_KEY=absent home=${account.id} sandbox=read-only approval=untrusted`);
       // Codex's own skills were switched off in the account's home, not the user's.
-      expect(JSON.parse(readFileSync(join(account.homeDir, "skills-off.json"), "utf8"))).toEqual({ path: "/bundled/imagegen/SKILL.md", enabled: false });
+      expect(JSON.parse(readFileSync(join(account.homeDir, "skill-switches.json"), "utf8"))).toEqual({ "/bundled/imagegen/SKILL.md": false });
     } finally {
       delete process.env.OPENAI_API_KEY;
     }
@@ -192,7 +192,7 @@ describe("codex: protocol mapping", () => {
 
 describe("tool bridge", () => {
   it("binds to 127.0.0.1 and refuses requests without its token", async () => {
-    const bridge = await startToolBridge([], async () => ({ content: "" }), new Diagnostics().scoped("t"));
+    const bridge = await startToolBridge([{ name: "edukors", tools: [], call: async () => ({ content: "" }) }], new Diagnostics().scoped("t"));
     try {
       expect(new URL(bridge.url).hostname).toBe("127.0.0.1");
       expect((await fetch(bridge.url, { method: "POST", body: "{}" })).status).toBe(401);

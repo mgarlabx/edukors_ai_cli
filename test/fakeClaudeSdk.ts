@@ -73,7 +73,6 @@ function makeQuery(prompt: AsyncIterable<SDKUserMessage>, options: Options, hist
   const out = new Channel<SDKMessage>();
   let model = options.model ?? "default";
   let interrupted = false;
-  let client: Client | null = null;
   const base = { session_id: sessionId, uuid: randomUUID() } as const;
   const emit = (msg: Record<string, unknown>) => out.push({ ...base, ...msg } as unknown as SDKMessage);
   const delta = (text: string) => emit({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } });
@@ -81,14 +80,17 @@ function makeQuery(prompt: AsyncIterable<SDKUserMessage>, options: Options, hist
   const result = (extra: Record<string, unknown> = {}) => emit({ type: "result", subtype: "success", is_error: false, result: "", usage, total_cost_usd: 0.01, ...extra });
   const signal = new AbortController().signal;
 
-  async function callTool(name: string, args: unknown): Promise<string> {
+  const clients = new Map<string, Client>();
+  async function callTool(name: string, args: unknown, serverName = "edukors"): Promise<string> {
+    let client = clients.get(serverName);
     if (!client) {
-      const server = (options.mcpServers?.edukors as { instance?: { connect(t: unknown): Promise<void> } } | undefined)?.instance;
-      if (!server) return "no tool server";
+      const server = (options.mcpServers?.[serverName] as { instance?: { connect(t: unknown): Promise<void> } } | undefined)?.instance;
+      if (!server) return `no MCP server ${serverName}`;
       const [a, b] = InMemoryTransport.createLinkedPair();
       await server.connect(b);
       client = new Client({ name: "fake-claude", version: "1.0.0" });
       await client.connect(a);
+      clients.set(serverName, client);
     }
     const r = await client.callTool({ name, arguments: args as Record<string, unknown> });
     const text = (r.content as { text?: string }[]).map((c) => c.text ?? "").join("\n");
@@ -100,6 +102,7 @@ function makeQuery(prompt: AsyncIterable<SDKUserMessage>, options: Options, hist
     emit({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } } });
     let answer: string;
     const tool = /\btool (\w+)(?: (\{.*\}))?/.exec(text);
+    const mcp = /\bmcp ([\w-]+) (\w+)(?: (\{.*\}))?/.exec(text);
     if (/crash/.test(text)) {
       delta("about to crash");
       await sleep(10);
@@ -121,6 +124,10 @@ function makeQuery(prompt: AsyncIterable<SDKUserMessage>, options: Options, hist
         await sleep(50);
       }
       answer = "done slowly";
+    } else if (mcp) {
+      const name = `mcp__${mcp[1]}__${mcp[2]}`;
+      const allowed = (await options.canUseTool!(name, {}, { signal } as never))?.behavior === "allow";
+      answer = allowed ? `${mcp[1]}.${mcp[2]} said: ${await callTool(mcp[2]!, mcp[3] ? JSON.parse(mcp[3]) : {}, mcp[1])}` : `${name} denied`;
     } else if (tool) {
       emit({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "t1", name: `mcp__edukors__${tool[1]}`, input: {} } } });
       // Like Claude Code: a tool not pre-approved by allowedTools is put to canUseTool first.

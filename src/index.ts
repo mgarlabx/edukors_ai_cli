@@ -1,7 +1,9 @@
 export { AiCli, createAiCli } from "./engine.js";
 export type { AccountInfo, AiCliOptions, DiagnosticReport, OpenSessionOptions } from "./engine.js";
 export { AiSession } from "./session.js";
-export type { SendOptions, SessionState, TurnResult } from "./session.js";
+export type { AuthorizationDecision, AuthorizationRequest, Authorizer, SendOptions, SessionState, TurnResult } from "./session.js";
+export { checkServers, McpServerSpecSchema } from "./mcp/external.js";
+export type { McpServerSpec } from "./mcp/external.js";
 export { AiCliError, ERROR_CODES, isAiCliError, toAiCliError } from "./errors.js";
 export type { ErrorCode, ErrorMeta, SerializedError } from "./errors.js";
 export { fromWindows } from "./events.js";
@@ -14,6 +16,7 @@ export type {
   Capabilities,
   Detection,
   DetectionStatus,
+  ExternalServer,
   LoginChannel,
   LoginPrompt,
   ModelInfo,

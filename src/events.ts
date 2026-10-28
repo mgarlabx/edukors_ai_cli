@@ -59,6 +59,8 @@ export type AiEventBody =
   | { type: "toolStarted"; callId: string; tool: string }
   | { type: "toolCompleted"; callId: string; tool: string; ok: boolean; errorCode?: string }
   | { type: "usageUpdated"; usage: Usage }
+  /** A user-configured MCP server's connection, reported when the session opens. */
+  | { type: "mcpServerStatus"; server: string; status: "connected" | "failed"; tools?: number; error?: string }
   | { type: "turnCompleted" }
   | { type: "cancelled" }
   | { type: "error"; error: SerializedError }

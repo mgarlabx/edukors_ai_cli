@@ -23,8 +23,8 @@ export type ToolCaller = (name: string, args: unknown) => Promise<ToolResult>;
 /** The largest request body the bridge reads; tool arguments are small. */
 const MAX_BODY = 4 << 20;
 
-export function createToolMcpServer(tools: readonly ToolSpec[], call: ToolCaller): McpServer {
-  const mcp = new McpServer({ name: TOOL_SERVER_NAME, version: VERSION }, { capabilities: { tools: {} } });
+export function createToolMcpServer(tools: readonly ToolSpec[], call: ToolCaller, name: string = TOOL_SERVER_NAME): McpServer {
+  const mcp = new McpServer({ name, version: VERSION }, { capabilities: { tools: {} } });
   // The low-level handlers take the JSON Schema as the application wrote it.
   mcp.server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: { type: "object" as const, ...t.inputSchema } })),
@@ -36,20 +36,31 @@ export function createToolMcpServer(tools: readonly ToolSpec[], call: ToolCaller
   return mcp;
 }
 
+/** One MCP server the bridge serves: the application's (`edukors`) or one of the user's, under its own name. */
+export interface BridgedServer {
+  name: string;
+  tools: readonly ToolSpec[];
+  call: ToolCaller;
+}
+
 export interface ToolBridge {
+  /** The address of the application's tools (`/mcp`). */
   url: string;
+  /** The address of a server by name: `/mcp` for the application's, `/mcp/<name>` for the others. */
+  urlFor(name: string): string;
   /** Sent by the provider as `Authorization: Bearer <token>`. Never written to disk or argv. */
   token: string;
   close(): Promise<void>;
 }
 
-export async function startToolBridge(tools: readonly ToolSpec[], call: ToolCaller, log: ScopedLog): Promise<ToolBridge> {
+export async function startToolBridge(servers: readonly BridgedServer[], log: ScopedLog): Promise<ToolBridge> {
   const token = randomBytes(24).toString("base64url");
   const expected = `Bearer ${token}`;
+  const byPath = new Map(servers.map((s) => [s.name === TOOL_SERVER_NAME ? "/mcp" : `/mcp/${s.name}`, s]));
 
   // Stateless: one server and transport per request, which is all a CLI needs.
-  async function serve(req: IncomingMessage, res: ServerResponse, body: unknown): Promise<void> {
-    const server = createToolMcpServer(tools, call);
+  async function serve(target: BridgedServer, req: IncomingMessage, res: ServerResponse, body: unknown): Promise<void> {
+    const server = createToolMcpServer(target.tools, target.call, target.name);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       void transport.close().catch(() => undefined);
@@ -66,7 +77,8 @@ export async function startToolBridge(tools: readonly ToolSpec[], call: ToolCall
       res.writeHead(401, { "content-type": "application/json" }).end('{"error":"unauthorized"}');
       return;
     }
-    if ((req.url ?? "").split("?")[0] !== "/mcp") {
+    const target = byPath.get((req.url ?? "").split("?")[0] ?? "");
+    if (!target) {
       res.writeHead(404).end();
       return;
     }
@@ -90,7 +102,7 @@ export async function startToolBridge(tools: readonly ToolSpec[], call: ToolCall
         res.writeHead(400, { "content-type": "application/json" }).end('{"error":"not JSON"}');
         return;
       }
-      serve(req, res, body).catch((e) => {
+      serve(target, req, res, body).catch((e) => {
         log.warn("tool bridge request failed", e);
         if (!res.headersSent) res.writeHead(500).end();
       });
@@ -102,8 +114,10 @@ export async function startToolBridge(tools: readonly ToolSpec[], call: ToolCall
     http.listen(0, "127.0.0.1", () => resolve());
   });
   const { port } = http.address() as AddressInfo;
+  const urlFor = (name: string) => `http://127.0.0.1:${port}/mcp${name === TOOL_SERVER_NAME ? "" : `/${encodeURIComponent(name)}`}`;
   return {
-    url: `http://127.0.0.1:${port}/mcp`,
+    url: urlFor(TOOL_SERVER_NAME),
+    urlFor,
     token,
     close: () =>
       new Promise<void>((resolve) => {

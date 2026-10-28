@@ -67,6 +67,21 @@ const result = await session.send("Rename the course", { context: latestDocument
 await session.interrupt();                          // committed edits stay; later output is dropped
 ```
 
+### Skills and the user's MCP servers
+
+```ts
+const session = await ai.openSession({
+  accountId, documentId, tools,
+  skillsDir: "/abs/path/to/skills",          // <name>/SKILL.md; no other skill is enabled
+  mcpServers: { glossary: { command: "npx", args: ["glossary-mcp"] } },  // or { type: "http" | "sse", url }
+  authorize: async ({ server, tool, input }) => (await ui.confirm(`${server}: ${tool}`)) ? { allow: true } : { allow: false, message: "Declined." },
+});
+```
+
+The library connects to the user's servers itself and offers their tools to either provider. A provider is never handed a server directly: every call goes through `authorize`, and is reported as `toolStarted`/`toolCompleted` (`mcp__<server>__<tool>`). Without `authorize`, such calls are denied. Server status is reported once as `mcpServerStatus` events.
+
+Claude Code loads the skills natively, through a local plugin. Codex would need shell commands to read them, so the library serves them through a `read_skill` tool confined to each skill's folder, and lists them in the session's developer instructions. In both cases the provider's own skills and the user's personal ones are switched off.
+
 ### Guarantees
 
 - **Scoped events.** Every event carries `appId`, `documentId`, `accountId`, `providerId` and `sessionId`. Events tied to a request also carry `requestId`.
@@ -117,7 +132,8 @@ Implement `ProviderAdapter` (see `src/provider.ts`). `src/testing/fakeProvider.t
 | `src/host/` | stdio application-host protocol and executable |
 | `src/cli/` | `edukors-ai` terminal tool |
 | `src/providers/claude/`, `src/providers/codex/` | Provider adapters |
-| `src/mcp/` | The application's tools as an MCP server (in-process or local HTTP bridge) |
+| `src/mcp/` | MCP servers: the application's tools (in-process or local HTTP bridge) and the user's servers (client) |
+| `src/skills.ts` | Skill folders: listing, confined reading, `read_skill` |
 | `src/testing/`, `fixtures/` | Fake provider adapter and fake CLIs (`fake-ai`, `fake-claude`, `fake-codex`) |
 
 ## Roadmap

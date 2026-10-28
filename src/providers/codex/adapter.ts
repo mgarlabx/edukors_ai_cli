@@ -1,7 +1,7 @@
 import { AiCliError, toAiCliError } from "../../errors.js";
 import { fromWindows, type LimitWindow, type Usage } from "../../events.js";
 import type { ScopedLog } from "../../diagnostics.js";
-import { startToolBridge, TOOL_SERVER_NAME, type ToolBridge } from "../../mcp/toolServer.js";
+import { startToolBridge, TOOL_SERVER_NAME, type BridgedServer, type ToolBridge } from "../../mcp/toolServer.js";
 import { compareVersions, findExecutable, readVersion } from "../../platform/discovery.js";
 import { buildEnv } from "../../platform/env.js";
 import { runLoginCommand } from "../../platform/login.js";
@@ -22,6 +22,7 @@ import type {
   TurnSink,
 } from "../../provider.js";
 import { VERSION } from "../../version.js";
+import { listSkills, READ_SKILL_TOOL, readSkillFile, readSkillSpec, skillsInstructions } from "../../skills.js";
 import { attachRpc, type Rpc } from "./rpc.js";
 
 /**
@@ -89,6 +90,7 @@ export function codexError(error: any): AiCliError {
 }
 
 const tomlString = (value: string) => JSON.stringify(value);
+
 
 export function createCodexProvider(options: CodexProviderOptions = {}): ProviderAdapter {
   const minVersion = options.minVersion ?? MIN_VERSION;
@@ -228,6 +230,11 @@ class CodexSession implements ProviderSession {
   private options: SessionOptions;
   private closing = false;
 
+  /** The servers this session serves through its bridge; any other is declined. */
+  private bridged = new Set<string>();
+  /** Added to Codex's own instructions (unlike baseInstructions, which replaces them). */
+  private developerInstructions = "";
+
   private constructor(
     private readonly proc: ManagedProcess,
     private readonly bridge: ToolBridge | null,
@@ -240,13 +247,44 @@ class CodexSession implements ProviderSession {
 
   static async open(context: SessionContext, hooks: SessionHooks, env: (c: AccountContext, extra?: Record<string, string>) => Record<string, string>, startupTimeoutMs: number): Promise<CodexSession> {
     let session: CodexSession | null = null;
-    const bridge = context.tools.length
-      ? await startToolBridge(context.tools, (name, args) => (session?.pending ? session.pending.sink.callTool(name, args) : Promise.resolve({ content: "No request is active.", isError: true })), context.log)
-      : null;
+    const idle = Promise.resolve({ content: "No request is active.", isError: true });
+    // Codex reads native skills with shell commands, which an editor session refuses:
+    // the application's skills are served by the library instead (read_skill).
+    const skills = context.skillsDir ? listSkills(context.skillsDir) : [];
+    const ownTools = [...context.tools];
+    if (skills.length) {
+      if (ownTools.some((t) => t.name === READ_SKILL_TOOL)) context.log.warn(`the application has a tool named ${READ_SKILL_TOOL}; skills are not offered`);
+      else ownTools.push(readSkillSpec);
+    }
+    const callOwn = async (name: string, args: unknown) => {
+      const pending = session?.pending;
+      if (!pending) return idle;
+      if (name !== READ_SKILL_TOOL || !context.skillsDir || ownTools.length === context.tools.length) return pending.sink.callTool(name, args);
+      pending.sink.activity("reading");
+      const { skill, file } = (args ?? {}) as { skill?: unknown; file?: unknown };
+      try {
+        return { content: readSkillFile(context.skillsDir, String(skill ?? ""), typeof file === "string" && file ? file : undefined) };
+      } catch (e) {
+        return { content: e instanceof Error ? e.message : String(e), isError: true };
+      }
+    };
+    // The application's tools and each of the user's servers, all behind the one bridge.
+    const served: BridgedServer[] = [
+      ...(ownTools.length ? [{ name: TOOL_SERVER_NAME, tools: ownTools, call: callOwn }] : []),
+      ...context.externalServers.map((server) => ({
+        name: server.name,
+        tools: server.tools,
+        call: (name: string, args: unknown) => (session?.pending ? session.pending.sink.callExternal(server.name, name, args) : idle),
+      })),
+    ];
+    const bridge = served.length ? await startToolBridge(served, context.log) : null;
     const args = ["app-server"];
-    if (bridge) args.push("-c", `mcp_servers.${TOOL_SERVER_NAME}.url=${tomlString(bridge.url)}`, "-c", `mcp_servers.${TOOL_SERVER_NAME}.bearer_token_env_var=${tomlString(TOKEN_VAR)}`);
+    for (const { name } of served)
+      args.push("-c", `mcp_servers.${name}.url=${tomlString(bridge!.urlFor(name))}`, "-c", `mcp_servers.${name}.bearer_token_env_var=${tomlString(TOKEN_VAR)}`);
     const proc = new ManagedProcess({ file: context.detection.executable!, args, env: env(context, bridge ? { [TOKEN_VAR]: bridge.token } : {}), cwd: context.workDir });
     session = new CodexSession(proc, bridge, context.log, hooks, context.options);
+    session.bridged = new Set(served.map((s) => s.name));
+    session.developerInstructions = ownTools.includes(readSkillSpec) ? skillsInstructions(skills) : "";
     try {
       await session.start(context, startupTimeoutMs);
     } catch (e) {
@@ -269,6 +307,7 @@ class CodexSession implements ProviderSession {
       approvalPolicy: "untrusted",
       sandbox: "read-only",
       ...(context.instructions ? { baseInstructions: context.instructions } : {}),
+      ...(this.developerInstructions ? { developerInstructions: this.developerInstructions } : {}),
       ...(context.options.model ? { model: context.options.model } : {}),
     };
     const thread = context.resumeId
@@ -280,12 +319,13 @@ class CodexSession implements ProviderSession {
   }
 
   /**
-   * Codex finds skills on its own (bundled ones and the user's ~/.agents);
-   * none belongs in an editor session. The switch is written to the
-   * account's own config, never the user's.
+   * Codex finds skills on its own (bundled ones, downloaded plugins', the
+   * user's ~/.agents) and reads them with shell commands. None belongs in an
+   * editor session: every one is switched off, in the account's own config.
    */
   private async disableSkills(cwd: string): Promise<void> {
     try {
+      await this.rpc.request("skills/extraRoots/set", { extraRoots: [] }, 30_000);
       const list = await this.rpc.request("skills/list", { cwds: [cwd], forceReload: true }, 30_000);
       const skills = (Array.isArray(list?.data) ? list.data : []).flatMap((e: any) => (Array.isArray(e?.skills) ? e.skills : []));
       for (const skill of skills) if (skill?.path && skill.enabled !== false) await this.rpc.request("skills/config/write", { path: String(skill.path), enabled: false }, 30_000);
@@ -426,7 +466,7 @@ class CodexSession implements ProviderSession {
         return { permissions: {} };
       // Codex asks before calling an MCP server; the application's tools decide for themselves.
       case "mcpServer/elicitation/request":
-        return { action: params?.serverName === TOOL_SERVER_NAME ? "accept" : "decline" };
+        return { action: this.bridged.has(String(params?.serverName)) ? "accept" : "decline" };
       case "item/tool/requestUserInput":
         return this.askUser(params);
       case "item/tool/call":

@@ -9,7 +9,8 @@ import { DataPaths, defaultDataDir } from "./platform/paths.js";
 import { AccountRegistry, type AccountRecord } from "./registry/registry.js";
 import { KeyedMutex, withLock } from "./registry/lock.js";
 import type { AccountContext, AccountStatus, Capabilities, Detection, LoginChannel, LoginPrompt, ModelInfo, ProviderAdapter, SessionOptions } from "./provider.js";
-import { AiSession } from "./session.js";
+import { AiSession, type Authorizer } from "./session.js";
+import { ExternalServers } from "./mcp/external.js";
 import { assertToolNames, toolSpec, type ToolDefinition } from "./tools.js";
 import { redactValue } from "./redact.js";
 import { VERSION } from "./version.js";
@@ -50,6 +51,15 @@ export interface OpenSessionOptions {
   options?: SessionOptions;
   /** A provider conversation id saved from a previous session (`session.resumeId`). */
   resumeId?: string;
+  /**
+   * The user's own MCP servers (`{ name: { command, args, env } | { type: "http" | "sse", url, headers } }`).
+   * The library connects to them and offers their tools; each call goes through `authorize`.
+   */
+  mcpServers?: Record<string, unknown>;
+  /** Decides each call to a user's MCP server. Without it, such calls are denied. */
+  authorize?: Authorizer;
+  /** A folder of skills (`<name>/SKILL.md`) to offer; no other skill is enabled. */
+  skillsDir?: string;
 }
 
 export interface DiagnosticReport {
@@ -281,7 +291,10 @@ export class AiCli {
     const capabilities = adapter.capabilities(context.detection);
     if (tools.length > 0 && !capabilities.tools) throw this.unsupported(adapter, "tools");
 
+    if (input.skillsDir && !isAbsolute(input.skillsDir)) throw new AiCliError("INVALID_ARGUMENT", "skillsDir must be an absolute path");
     const sessionId = randomUUID();
+    const log = this.diagnostics.scoped(`session:${sessionId.slice(0, 8)}`);
+    const external = input.mcpServers && Object.keys(input.mcpServers).length ? await ExternalServers.connect(input.mcpServers, log) : null;
     const workDir = this.paths.sessionDir(this.appId, input.documentId, account.id);
     const scope = { appId: this.appId, documentId: input.documentId, accountId: account.id, providerId: adapter.id, sessionId };
     const session: AiSession = new AiSession({
@@ -289,11 +302,16 @@ export class AiCli {
       capabilities,
       scope,
       tools: new Map(tools.map((t) => [t.name, t])),
+      ...(external ? { external: external.servers } : {}),
+      ...(input.authorize ? { authorize: input.authorize } : {}),
       options: input.options ?? {},
-      log: this.diagnostics.scoped(`session:${sessionId.slice(0, 8)}`),
+      log,
       interruptGraceMs: this.options.interruptGraceMs ?? 5_000,
       publish: (event) => this.publish(event),
-      onClosed: (s) => this.openSessions.delete(s.id),
+      onClosed: (s) => {
+        this.openSessions.delete(s.id);
+        void external?.servers.close();
+      },
       context: async () => {
         // Re-read on every (re)start: the account may have been removed or relabelled.
         const fresh = await this.accountContext(account.id);
@@ -305,6 +323,8 @@ export class AiCli {
           workDir,
           instructions: input.instructions ?? "",
           tools: tools.map(toolSpec),
+          externalServers: external?.servers.list() ?? [],
+          ...(input.skillsDir ? { skillsDir: input.skillsDir } : {}),
           options: {},
         };
       },
@@ -313,10 +333,12 @@ export class AiCli {
     try {
       await session.start(input.resumeId);
     } catch (e) {
-      // Nothing was started, so there is nothing to close.
+      // Only the user's servers were started.
       this.openSessions.delete(sessionId);
+      await external?.servers.close();
       throw e;
     }
+    if (external) session.reportServers(external.statuses);
     return session;
   }
 

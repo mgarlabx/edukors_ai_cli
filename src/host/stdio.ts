@@ -20,6 +20,9 @@ import { VERSION } from "../version.js";
  *                with acceptsCode, the app collects the pasted code and sends
  *                accounts.submitCode
  *   host → app   { id: "h:<n>", method: "tool.call", params }   the host asks the app to run a tool
+ *   host → app   { id: "h:<n>", method: "tool.authorize", params }
+ *                the host asks the app whether a call to one of the user's MCP
+ *                servers may go ahead; the app answers { allow, message? }
  *   app → host   { id: "h:<n>", result } | { id: "h:<n>", error }
  *
  * The first line the host writes is { ready: { protocol, version } }.
@@ -54,6 +57,8 @@ const METHODS = {
     tools: z.array(ToolSpecSchema).optional(),
     options: Options.optional(),
     resumeId: z.string().optional(),
+    mcpServers: z.record(z.string(), z.unknown()).optional(),
+    skillsDir: z.string().optional(),
   }),
   "session.send": SessionRef.extend({ text: z.string(), requestId: z.string().optional(), context: z.string().optional() }),
   "session.interrupt": SessionRef,
@@ -77,6 +82,7 @@ const Message = z.object({
 });
 
 const ToolReply = z.object({ content: z.string(), isError: z.boolean().optional() });
+const AuthorizeReply = z.object({ allow: z.boolean(), message: z.string().optional() });
 
 export interface StdioHostOptions {
   ai: AiCli;
@@ -91,7 +97,20 @@ export function runStdioHost({ ai, input, output, toolTimeoutMs = 120_000 }: Std
   const write = (msg: unknown) => output.write(JSON.stringify(msg) + "\n");
   const sessions = new Map<string, AiSession>();
   const aborts = new Map<Id, AbortController>();
-  const toolCalls = new Map<string, { resolve: (r: ToolResult) => void; timer: NodeJS.Timeout }>();
+  /** Requests to the app waiting for its answer: tool calls and authorizations. */
+  const toolCalls = new Map<string, { resolve: (result: unknown, error?: { message?: string }) => void; timer: NodeJS.Timeout }>();
+
+  /** Asks the app something and waits; the timeout answers with `fallback`. */
+  const askApp = <T>(method: string, params: Record<string, unknown>, parse: (result: unknown, error?: { message?: string }) => T, fallback: T): Promise<T> =>
+    new Promise<T>((resolve) => {
+      const id = `h:${nextToolCall++}`;
+      const timer = setTimeout(() => {
+        toolCalls.delete(id);
+        resolve(fallback);
+      }, toolTimeoutMs);
+      toolCalls.set(id, { resolve: (result, error) => resolve(parse(result, error)), timer });
+      write({ id, method, params });
+    });
   const inFlight = new Set<Promise<unknown>>();
   let nextToolCall = 1;
 
@@ -101,15 +120,15 @@ export function runStdioHost({ ai, input, output, toolTimeoutMs = 120_000 }: Std
   const remoteTool = (spec: z.infer<typeof ToolSpecSchema>, sessionId: () => string): ToolDefinition => ({
     ...spec,
     run: (args, context) =>
-      new Promise<ToolResult>((resolve) => {
-        const id = `h:${nextToolCall++}`;
-        const timer = setTimeout(() => {
-          toolCalls.delete(id);
-          resolve({ content: "The editor did not answer in time.", isError: true });
-        }, toolTimeoutMs);
-        toolCalls.set(id, { resolve, timer });
-        write({ id, method: "tool.call", params: { sessionId: sessionId(), requestId: context.requestId, documentId: context.documentId, name: spec.name, args } });
-      }),
+      askApp(
+        "tool.call",
+        { sessionId: sessionId(), requestId: context.requestId, documentId: context.documentId, name: spec.name, args },
+        (result, error): ToolResult => {
+          const reply = ToolReply.safeParse(result);
+          return error || !reply.success ? { content: error?.message ?? "The editor returned an invalid tool result.", isError: true } : reply.data;
+        },
+        { content: "The editor did not answer in time.", isError: true },
+      ),
   });
 
   const session = (id: string) => {
@@ -165,7 +184,26 @@ export function runStdioHost({ ai, input, output, toolTimeoutMs = 120_000 }: Std
       case "session.open": {
         let sessionId = "";
         const tools = (p.tools ?? []).map((t: z.infer<typeof ToolSpecSchema>) => remoteTool(t, () => sessionId));
-        const opened = await ai.openSession({ accountId: p.accountId, documentId: p.documentId, instructions: p.instructions, tools, options: p.options, resumeId: p.resumeId });
+        const opened = await ai.openSession({
+          accountId: p.accountId,
+          documentId: p.documentId,
+          instructions: p.instructions,
+          tools,
+          options: p.options,
+          resumeId: p.resumeId,
+          ...(p.mcpServers ? { mcpServers: p.mcpServers } : {}),
+          ...(p.skillsDir ? { skillsDir: p.skillsDir } : {}),
+          authorize: ({ signal: _signal, ...request }) =>
+            askApp(
+              "tool.authorize",
+              { sessionId, ...request },
+              (result, error) => {
+                const reply = AuthorizeReply.safeParse(result);
+                return error || !reply.success ? { allow: false as const, message: error?.message ?? "The editor gave no valid answer." } : reply.data.allow ? { allow: true as const } : { allow: false as const, ...(reply.data.message ? { message: reply.data.message } : {}) };
+              },
+              { allow: false as const, message: "The editor did not answer in time." },
+            ),
+        });
         sessionId = opened.id;
         sessions.set(opened.id, opened);
         opened.on((e) => e.type === "sessionClosed" && sessions.delete(opened.id));
@@ -209,8 +247,7 @@ export function runStdioHost({ ai, input, output, toolTimeoutMs = 120_000 }: Std
       if (!pending) return;
       toolCalls.delete(id);
       clearTimeout(pending.timer);
-      const reply = ToolReply.safeParse(message.result);
-      pending.resolve(message.error || !reply.success ? { content: message.error?.message ?? "The editor returned an invalid tool result.", isError: true } : reply.data);
+      pending.resolve(message.result, message.error ?? undefined);
       return;
     }
     const method = message.method;
@@ -232,7 +269,7 @@ export function runStdioHost({ ai, input, output, toolTimeoutMs = 120_000 }: Std
       // running requests are stopped, but every request still gets its answer.
       for (const pending of toolCalls.values()) {
         clearTimeout(pending.timer);
-        pending.resolve({ content: "The editor closed.", isError: true });
+        pending.resolve(undefined, { message: "The editor closed." });
       }
       for (const controller of aborts.values()) controller.abort();
       const settled = Promise.allSettled([...inFlight]);

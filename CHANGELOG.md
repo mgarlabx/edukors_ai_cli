@@ -13,4 +13,6 @@
 - Compatibility matrix (`docs/compatibility.md`).
 - Sign-in without a working browser: `connectAccount` reports the provider's sign-in address through `onLogin`, and `submitLoginCode` passes a pasted code to the waiting CLI (host: `login` message and `accounts.submitCode`; terminal: `edukors-ai connect` asks for the code).
 - Codex: questions in Codex 0.164's async form are answered through `turn/steer`; a resumed thread's replayed notifications no longer capture the next request; status names the account (`account/read`).
+- Skills: `skillsDir` offers an application's skills (Claude natively, Codex through `read_skill`); every other skill is off.
+- The user's MCP servers: `mcpServers` + `authorize`; the library connects to them and re-serves their tools, every call authorized and reported (`mcpServerStatus`, `TOOL_DENIED`). Host: `session.open` takes both, and asks the app with `tool.authorize`.
 - Usage reports every limit window (`windows`), the most used one as `limitUsed`.
