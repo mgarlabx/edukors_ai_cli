@@ -67,7 +67,7 @@ describe("sign-in without a working browser", () => {
     try {
       const account = await ai.createAccount({ providerId: "codex" });
       const prompts: LoginPrompt[] = [];
-      expect(await ai.connectAccount(account.id, { onLogin: (p) => prompts.push(p) })).toEqual({ state: "connected" });
+      expect(await ai.connectAccount(account.id, { onLogin: (p) => prompts.push(p) })).toEqual({ state: "connected", identity: account.id });
       expect(prompts).toEqual([{ url: "https://auth.openai.com/oauth/authorize?response_type=code&client_id=fake-client&state=fake-state", acceptsCode: false }]);
     } finally {
       await ai.dispose();

@@ -45,6 +45,8 @@ export function attachRpc(proc: ManagedProcess, handlers: RpcHandlers, log: Scop
       }
       if (!msg || typeof msg !== "object") return;
       const hasId = msg.id !== undefined && msg.id !== null;
+      // Method names and ids only: params can hold document content.
+      if (typeof msg.method === "string" && !/delta$/i.test(msg.method)) log.debug(`codex -> ${msg.method}${hasId ? ` #${msg.id}` : ""}`);
       if (hasId && typeof msg.method === "string") {
         const answer = handlers.onRequest ? handlers.onRequest(msg.method, msg.params ?? {}) : Promise.reject(new Error(`unhandled request: ${msg.method}`));
         answer.then(

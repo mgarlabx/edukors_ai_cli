@@ -36,7 +36,7 @@ describe("codex: installation and accounts", () => {
     const personal = await s.ai.createAccount({ providerId: "codex", label: "Personal" });
     const work = await s.ai.createAccount({ providerId: "codex", label: "Work" });
     expect(await s.ai.accountStatus(personal.id)).toEqual({ state: "disconnected" });
-    expect(await s.ai.connectAccount(personal.id)).toEqual({ state: "connected" });
+    expect(await s.ai.connectAccount(personal.id)).toEqual({ state: "connected", identity: personal.id });
     expect(await s.ai.accountStatus(work.id)).toEqual({ state: "disconnected" });
     expect(existsSync(join(personal.homeDir, "auth.json"))).toBe(true);
     expect(existsSync(join(work.homeDir, "auth.json"))).toBe(false);
@@ -110,8 +110,22 @@ describe("codex: sessions", () => {
     session.on((e) => e.type === "question" && session.answer(e.questionId, "red"));
     await session.send("ask", { requestId: "q" });
     expect(textOf(s.events, "q")).toBe("You chose red");
+    expect(s.events.find((e) => e.type === "question" && e.requestId === "q")).toMatchObject({ prompt: "Which color?", options: ["red", "blue"] });
+    await session.send("ask-blocking", { requestId: "qb" });
+    expect(textOf(s.events, "qb")).toBe("You chose red");
     await session.send("comando", { requestId: "c" });
     expect(textOf(s.events, "c")).toBe("Command decline");
+  });
+
+  it("interrupts a turn that is waiting for the user's answer", async () => {
+    await using s = await setup();
+    const account = await s.connected();
+    const session = await s.ai.openSession({ accountId: account.id, documentId: "d" });
+    const pending = session.send("ask", { requestId: "q" });
+    await until(() => s.events.some((e) => e.type === "question"));
+    await session.interrupt();
+    expect(await pending).toEqual({ requestId: "q", status: "cancelled" });
+    expect((await session.send("after", { requestId: "n" })).status).toBe("completed");
   });
 
   it("interrupts and drops output that arrives afterwards", async () => {

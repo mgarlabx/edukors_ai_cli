@@ -6,7 +6,7 @@ Status of each provider adapter: what it relies on, and how far each part has be
 
 - **Offline**: covered by the automated suite against a fake CLI that reproduces the protocol (`fixtures/`, `test/fakeClaudeSdk.ts`).
 - **Real CLI, signed out**: run against the real CLI on macOS with a new, empty account directory. No sign-in, no prompt, no tokens spent.
-- **Live**: run against the real CLI with signed-in accounts. Claude: done on 2026-10-28 (macOS arm64, Claude Code 2.1.312, two different accounts: a personal organization and a Team organization). Codex: pending.
+- **Live**: run against the real CLI with signed-in accounts. Claude: done on 2026-10-28 (macOS arm64, Claude Code 2.1.312, two different accounts: a personal organization and a Team organization). Codex: done on 2026-10-28 (macOS arm64, Codex 0.164.0, two different ChatGPT accounts: Plus and Free).
 
 ## Versions
 
@@ -48,20 +48,20 @@ The Agent SDK installs a bundled Claude Code as an optional dependency (`@anthro
 | Area | Mechanism | Verified |
 | --- | --- | --- |
 | Discovery | `codex` on PATH, common install dirs, login shell; `EDUKORS_CODEX` or the `executable` option overrides | Offline; real CLI (macOS) |
-| Account isolation | `CODEX_HOME` = the account's managed directory; Codex keeps `auth.json` there. The user's `~/.codex` is never read or copied (the Graph editor copied `auth.json`; the plan forbids it) | Offline. **Live: pending** (two accounts at once; whether a keyring credential store changes this) |
+| Account isolation | `CODEX_HOME` = the account's managed directory; Codex keeps `auth.json` there. The user's `~/.codex` is never read or copied (the Graph editor copied `auth.json`; the plan forbids it) | **Live**: two ChatGPT accounts (Plus, Free) answered at the same time on the same document id, each with its own limits; the user's own `~/.codex` stayed signed in and its `auth.json` untouched |
 | Inherited credentials | Allowlisted environment; `OPENAI_API_KEY`, `CODEX_HOME` etc. never inherited | Offline |
-| Sign-in | `codex login` (browser, local callback on port 1455). The address it prints when the browser does not open is offered through `onLogin` with `acceptsCode: false`: it completes in the browser too | Offline. **Live: pending**, including without a terminal |
-| Status (no model call) | `codex login status`: exit 0 signed in; exit 1 and "Not logged in" signed out | Real CLI, signed out. No identity: the command does not print one |
+| Sign-in | `codex login` (browser, local callback on `127.0.0.1:1455`). The address it prints when the browser does not open is offered through `onLogin` with `acceptsCode: false`: it completes in the browser too | **Live**, without a terminal, both accounts. As with Claude, the browser reuses a signed-in session |
+| Status (no model call) | `account/read` on a short-lived app server: e-mail and plan (`codex login status` names no account); the CLI is the fallback | **Live** |
 | Sign-out | `codex logout` | Offline |
-| Models | `model/list` on a short-lived app server; hidden models filtered | Real CLI, signed out |
-| Usage | `account/rateLimits/read`: most-used window as `limitUsed`, with reset time; also `account/rateLimits/updated` and `thread/tokenUsage/updated` during turns | Offline. **Live: pending** |
-| Session | `codex app-server`, one process per session, `initialize` with `experimentalApi`, `account/read`, then `thread/start` (`sandbox: read-only`, `approvalPolicy: untrusted`, `baseInstructions`) or `thread/resume` | Real CLI, signed out (starts, initializes, reports the account). **Live turn: pending** |
-| Tools | MCP over HTTP on 127.0.0.1, random port, per-session bearer token in `EDUKORS_MCP_TOKEN`; configured with `-c mcp_servers.edukors.*` so no config file is shared between documents | Offline (also: refuses requests without the token). **Live: pending** |
-| Commands, file changes, extra permissions | Declined | Offline |
+| Models | `model/list` on a short-lived app server; hidden models filtered | **Live** (the list differs per plan) |
+| Usage | `account/rateLimits/read` and `account/rateLimits/updated`: every window (`five_hour`, `seven_day`; other durations by minutes, e.g. the Free plan's 30-day `43200min`), the most used as `limitUsed`; `thread/tokenUsage/updated` per turn | **Live** |
+| Session | `codex app-server`, one process per session, `initialize` with `experimentalApi`, `account/read`, then `thread/start` (`sandbox: read-only`, `approvalPolicy: untrusted`, `baseInstructions`) or `thread/resume` | **Live** |
+| Tools | MCP over HTTP on 127.0.0.1, random port, per-session bearer token in `EDUKORS_MCP_TOKEN`; configured with `-c mcp_servers.edukors.*` so no config file is shared between documents | **Live** (also: refuses requests without the token, offline) |
+| Commands, file changes, extra permissions | Declined | **Live**: Codex asked to run `ls /`, was refused, and said so |
 | Skills | Codex's own and the user's (`~/.agents`) turned off in the account's config via `skills/config/write` | Offline. **Live: pending** |
-| Questions | `item/tool/requestUserInput` (experimental API), answers keyed by question id | Offline |
-| Interrupt | `turn/interrupt`; turn ends `interrupted` | Offline |
-| Resume | `thread/resume`; the tool server is passed again at process start | Offline |
+| Questions | Codex 0.164 asks in an `agentMessage` with `delivery: "async"` and `questions: [{ title, options }]`, then runs a `sleep` item (12 h) until a user message arrives; the adapter puts each question to the user and answers with `turn/steer`. `item/tool/requestUserInput` (blocking, keyed by question id) is still handled | **Live** (async form). Before this was handled, such a turn waited indefinitely |
+| Interrupt | `turn/interrupt`; turn ends `interrupted` | **Live**: no output of the cancelled request reached the application afterwards |
+| Resume | `thread/resume`; the tool server is passed again at process start. A resumed thread replays an older turn's `thread/tokenUsage/updated`, so a request's turn is taken only from `turn/started` or the `turn/start` answer | **Live**: after `kill -9`, the next request resumed the thread with its history |
 | Errors | `usageLimitExceeded`/`rateLimitExceeded` → `RATE_LIMITED`, `unauthorized` → `ACCOUNT_EXPIRED`, overload/connection → retryable `PROVIDER_ERROR` | Offline |
 
 ### Why not Codex dynamic tools
@@ -87,9 +87,13 @@ The experimental API also lets a client pass tools directly (`dynamicTools` on `
 
 `connectAccount(id, { onLogin })` calls `onLogin({ url, acceptsCode })` as soon as the provider prints its sign-in address; the stdio host sends it as `{ login: { requestId, accountId, url, acceptsCode } }`. An editor shows the address as a fallback ("If the browser did not open…"). With `acceptsCode`, it also shows a field whose value goes to `submitLoginCode(id, code)` (host: `accounts.submitCode`). The field should say which code it wants: the long code shown after **Authorize**, not the 6-digit code claude.ai may e-mail for its own sign-in.
 
+## Observed behavior worth knowing
+
+- **Codex latency varies by account.** During the checks, one account (Plus) took 25 s to answer a one-word prompt and sometimes stayed silent for minutes, with no event at all, while the other answered in 3 s. Nothing in the protocol distinguishes that wait from a stall, so an editor should keep showing the request as running and offer Stop; the library sets no request timeout.
+
 ## Live checks
 
-Claude: done (2026-10-28). Codex: pending. For each provider, with two accounts (A, B) of different identities:
+Claude: done (2026-10-28). Codex: done (2026-10-28). For each provider, with two accounts (A, B) of different identities:
 
 1. Sign in A and B through `edukors-ai connect`; confirm each opens the browser and finishes without a terminal.
 2. Confirm `status` shows each account's own identity, and that the user's personal CLI sign-in is unchanged.

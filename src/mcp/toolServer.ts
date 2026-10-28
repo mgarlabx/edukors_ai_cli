@@ -60,6 +60,8 @@ export async function startToolBridge(tools: readonly ToolSpec[], call: ToolCall
   }
 
   const http = createServer((req, res) => {
+    const started = Date.now();
+    res.on("finish", () => log.debug(`tool bridge ${req.method} ${(req.url ?? "").split("?")[0]} -> ${res.statusCode} (${Date.now() - started} ms)`));
     if (req.headers.authorization !== expected) {
       res.writeHead(401, { "content-type": "application/json" }).end('{"error":"unauthorized"}');
       return;

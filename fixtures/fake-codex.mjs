@@ -6,7 +6,9 @@
 //
 // A turn depends on words in the request:
 //   tool <name> [<json>]  calls an application tool over MCP
-//   ask                   asks the user (item/tool/requestUserInput)
+//   ask                   asks the user as Codex 0.164 does: an async message
+//                         with questions, then sleeps until turn/steer answers
+//   ask-blocking          asks the user through item/tool/requestUserInput
 //   comando               asks to run a command and reports the decision
 //   slow                  streams until interrupted
 //   late                  after an interruption, still sends stale text
@@ -132,19 +134,32 @@ async function handle(msg) {
       const file = join(threadsDir, `${params.threadId}.json`);
       if (!existsSync(file)) return out({ id, error: { code: -32600, message: "no such thread" } });
       thread = JSON.parse(readFileSync(file, "utf8"));
+      // Like Codex 0.164, a resumed thread replays the last turn's usage, later on.
+      thread.replay = thread.lastTurnId;
       return reply(id, { thread: { id: thread.id }, model: "gpt-fake" });
     }
     case "turn/start": {
-      const turn = { id: `turn_${++turnCount}`, interrupted: false, model: params.model ?? null, effort: params.effort ?? null };
+      const turn = { id: `turn_${++turnCount}_${randomUUID().slice(0, 8)}`, interrupted: false, model: params.model ?? null, effort: params.effort ?? null };
       current = turn;
+      if (thread.replay) {
+        notify("thread/tokenUsage/updated", { threadId: thread.id, turnId: thread.replay, tokenUsage: { last: { inputTokens: 999, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 999 }, total: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 } } });
+        thread.replay = null;
+      }
       // The real server announces the turn around the time it answers.
       notify("turn/started", { threadId: thread.id, turn: { id: turn.id, status: "inProgress" } });
       reply(id, { turn: { id: turn.id, status: "inProgress" } });
       runTurn(turn, params.input?.[0]?.text ?? "").catch((e) => notify("turn/completed", { threadId: thread.id, turn: { id: turn.id, status: "failed", error: { message: String(e) } } }));
       return;
     }
+    case "turn/steer": {
+      if (!current || current.id !== params.expectedTurnId) return out({ id, error: { code: -32600, message: "no such active turn" } });
+      reply(id, { turnId: current.id });
+      current.steer?.(params.input?.[0]?.text ?? "");
+      return;
+    }
     case "turn/interrupt":
       if (current && current.id === params.turnId) current.interrupted = true;
+      current?.steer?.(null);
       for (const [key, resolve] of waiting) {
         waiting.delete(key);
         resolve(null);
@@ -177,7 +192,15 @@ async function runTurn(turn, text) {
     notify("item/started", { ...base, item: { id: "t", type: "mcpToolCall", server: "edukors", tool: tool[1] } });
     const result = await callTool(tool[1], tool[2] ? JSON.parse(tool[2]) : {});
     answer = `Tool ${tool[1]} said: ${result.text}${result.isError ? " (error)" : ""}`;
-  } else if (/\bask\b/.test(text)) {
+  } else if (/\bask\b/.test(text) && !/ask-blocking/.test(text)) {
+    const item = { type: "agentMessage", id: "q", text: "Which color?\n- red\n- blue", phase: "final_answer", delivery: "async", questions: [{ title: "Which color?", options: ["red", "blue"] }] };
+    notify("item/started", { ...base, item });
+    notify("item/completed", { ...base, item });
+    notify("item/started", { ...base, item: { type: "sleep", id: "s", durationMs: 43200000 } });
+    const steered = await new Promise((resolve) => (turn.steer = resolve));
+    if (steered === null || turn.interrupted) return end("interrupted");
+    answer = `You chose ${steered}`;
+  } else if (/ask-blocking/.test(text)) {
     const res = await askClient("item/tool/requestUserInput", { ...base, itemId: "q", isBlocking: true, questions: [{ id: "color", header: "Color", question: "Which color?", options: [{ label: "red", description: "" }, { label: "blue", description: "" }] }] });
     if (!res || turn.interrupted) return end("interrupted");
     answer = `You chose ${res.answers?.color?.answers?.[0] ?? "nothing"}`;
@@ -205,6 +228,7 @@ async function runTurn(turn, text) {
   }
   for (const piece of [answer.slice(0, 10), answer.slice(10)]) if (piece) say(piece);
   thread.turns.push(text);
+  thread.lastTurnId = turn.id;
   saveThread();
   notify("thread/tokenUsage/updated", { ...base, tokenUsage: { last: { inputTokens: text.length, outputTokens: answer.length, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: text.length + answer.length }, total: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 } } });
   end("completed");

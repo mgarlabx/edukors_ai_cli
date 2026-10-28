@@ -160,6 +160,16 @@ export function createCodexProvider(options: CodexProviderOptions = {}): Provide
     },
 
     async accountStatus(context): Promise<AccountStatus> {
+      // The app server names the account (`codex login status` does not); the CLI is the fallback.
+      try {
+        const read = await withAppServer(context, (rpc) => rpc.request("account/read", { refreshToken: false }, 15_000));
+        const account = read?.account;
+        if (!account) return { state: "disconnected" };
+        const identity = typeof account.email === "string" && account.email ? account.email : account.type === "apiKey" ? "API key" : undefined;
+        return { state: "connected", ...(identity ? { identity } : {}) };
+      } catch (e) {
+        context.log.debug("codex account/read failed; asking the CLI", e);
+      }
       const result = await cli(context, ["login", "status"]);
       const said = `${result.stdout}\n${result.stderr}`;
       if (result.code === 0) return { state: "connected" };
@@ -338,11 +348,13 @@ class CodexSession implements ProviderSession {
     if (this.sinks.size > 8) this.sinks.delete(this.sinks.keys().next().value!);
   }
 
-  /** The sink for a turn: the current one, or the dead sink of an older turn. */
+  /**
+   * The sink for a turn: the current one, or the dead sink of an older turn.
+   * A request's turn comes only from `turn/started` or the `turn/start`
+   * answer: after a resume, Codex replays notifications of older turns.
+   */
   private sinkFor(turnId: unknown): TurnSink | undefined {
-    if (typeof turnId !== "string") return undefined;
-    if (this.pending && !this.pending.turnId && !this.sinks.has(turnId)) this.adopt(turnId);
-    return this.sinks.get(turnId);
+    return typeof turnId === "string" ? this.sinks.get(turnId) : undefined;
   }
 
   private onNotification(method: string, params: any): void {
@@ -351,7 +363,7 @@ class CodexSession implements ProviderSession {
     const isCurrent = () => this.pending?.turnId === turnId;
     switch (method) {
       case "turn/started":
-        this.sinkFor(turnId);
+        if (typeof turnId === "string") this.adopt(turnId);
         return;
       case "item/agentMessage/delta":
         if (typeof params.delta === "string") this.sinkFor(turnId)?.text(params.delta);
@@ -363,6 +375,12 @@ class CodexSession implements ProviderSession {
           this.pending.thinking = true;
           sink.activity("thinking");
         }
+        return;
+      }
+      case "item/completed": {
+        // Codex 0.164 asks the user in an async message and sleeps until a reply steers the turn.
+        const item = params?.item;
+        if (item?.type === "agentMessage" && Array.isArray(item.questions) && item.questions.length && isCurrent()) void this.answerAsync(turnId, item.questions);
         return;
       }
       case "item/started": {
@@ -416,6 +434,28 @@ class CodexSession implements ProviderSession {
       default:
         throw new Error(`unsupported request: ${method}`);
     }
+  }
+
+  /** Puts an async message's questions to the user and steers the sleeping turn with the answers. */
+  private async answerAsync(turnId: string, questions: any[]): Promise<void> {
+    const sink = this.sinkFor(turnId);
+    if (!sink) return;
+    const answers: string[] = [];
+    try {
+      for (const q of questions) {
+        const prompt = String(q?.title ?? "");
+        if (!prompt) continue;
+        const options = (Array.isArray(q.options) ? q.options : []).map(String).filter(Boolean);
+        const answer = await sink.ask({ prompt, ...(options.length ? { options } : {}) });
+        answers.push(questions.length > 1 ? `${prompt} ${answer}` : answer);
+      }
+    } catch {
+      return; // Cancelled: the interruption ends the turn.
+    }
+    if (this.pending?.turnId !== turnId || !answers.length) return;
+    await this.rpc
+      .request("turn/steer", { threadId: this.resumeId, expectedTurnId: turnId, input: [{ type: "text", text: answers.join("\n") }] }, 30_000)
+      .catch((e) => this.log.warn("codex did not take the answer", e));
   }
 
   private async askUser(params: any): Promise<unknown> {
