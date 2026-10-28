@@ -26,26 +26,29 @@ export interface SandboxPaths {
 
 /** What the system and a CLI installed the usual ways need to read to start. */
 export function runtimeDirs(executable: string, realExecutable: string): string[] {
-  const home = homedir();
   return [
     dirname(executable),
     dirname(realExecutable),
     // An npm-installed CLI is a Node script; Node and its version managers.
     dirname(process.execPath),
-    join(home, ".nvm"),
-    join(home, ".bun"),
-    join(home, ".local", "share", "mise"),
-    join(home, ".local", "share", "uv"),
+    ...userToolDirs(),
   ];
 }
 
-const SYSTEM_READABLE = ["/System", "/Library", "/usr", "/bin", "/sbin", "/opt", "/dev", "/private/etc", "/private/var/db", "/private/var/run"];
+/** Where the usual version managers keep the tools a command may run (Node, Bun, Python). */
+export function userToolDirs(): string[] {
+  const home = homedir();
+  return [join(home, ".nvm"), join(home, ".bun"), join(home, ".local", "share", "mise"), join(home, ".local", "share", "uv"), join(home, ".local", "bin")];
+}
+
+/** What a command needs to read on macOS besides its workspace: the system and installed tools, not users' or temporary files. */
+export const MACOS_SYSTEM_READABLE = ["/System", "/Library", "/usr", "/bin", "/sbin", "/opt", "/dev", "/private/etc", "/private/var/db", "/private/var/run"];
 
 export function seatbeltPolicy(paths: SandboxPaths): string {
   const subpath = (p: string) => `(subpath ${JSON.stringify(p)})`;
   const literal = (p: string) => `(literal ${JSON.stringify(p)})`;
   const outside = (dirs: string[]) => dirs.map((p) => `(require-not ${subpath(p)})`).join(" ");
-  const readable = [...paths.writable, ...paths.readable, ...SYSTEM_READABLE];
+  const readable = [...paths.writable, ...paths.readable, ...MACOS_SYSTEM_READABLE];
   const lines = [
     "(version 1)",
     "(allow default)",

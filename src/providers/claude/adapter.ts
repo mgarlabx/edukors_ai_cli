@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { CanUseTool, EffortLevel, Options, Query, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
@@ -8,6 +8,7 @@ import { AiCliError, toAiCliError } from "../../errors.js";
 import type { ScopedLog } from "../../diagnostics.js";
 import { createToolMcpServer, TOOL_SERVER_NAME } from "../../mcp/toolServer.js";
 import { listSkills } from "../../skills.js";
+import { userToolDirs } from "../../platform/sandbox.js";
 
 const PLUGIN_NAME = "edukors";
 
@@ -68,11 +69,15 @@ const rulePath = (p: string) => "/" + p.replace(/\\/g, "/").replace(/^([A-Za-z])
 /**
  * The settings of a workspace session (the flag layer, above everything but
  * managed settings): its tools allowed, writes to the protected paths and the
- * extra folders denied, and commands in Claude Code's sandbox, which reads
- * only the workspace and its extra folders in the home folder and writes only
- * the workspace.
+ * extra folders denied, and commands in Claude Code's sandbox, which writes
+ * only the workspace, and reads nothing where users' or temporary files are
+ * kept (home folders, mounted volumes, temporary folders) except the
+ * workspace, its extra folders, the usual tool installations and the
+ * session's own temporary folder (`tempDir`, Claude Code's
+ * CLAUDE_CODE_TMPDIR), which its shell writes. Denying reads from the root instead would stop
+ * Node from starting, since the sandbox cannot leave the root's listing open.
  */
-export function workspaceSettings(workspace: Workspace): Record<string, unknown> {
+export function workspaceSettings(workspace: Workspace, platform: NodeJS.Platform = process.platform, tempDir?: string): Record<string, unknown> {
   const readOnly = [...workspace.protectedPaths, ...workspace.readDirs].map(rulePath);
   const deny = readOnly.flatMap((p) => WRITE_TOOLS.flatMap((t) => [`${t}(${p})`, `${t}(${p}/**)`]));
   const permissions = { allow: workspaceTools(workspace), deny, blockReadsOutsideWorkingDirectories: true };
@@ -84,10 +89,20 @@ export function workspaceSettings(workspace: Workspace): Record<string, unknown>
       failIfUnavailable: true,
       autoAllowBashIfSandboxed: true,
       allowUnsandboxedCommands: false,
-      filesystem: { denyRead: ["~", "/Volumes"], allowRead: [workspace.dir, ...workspace.readDirs], allowWrite: [workspace.dir], denyWrite: workspace.protectedPaths },
+      filesystem: {
+        denyRead: platform === "darwin" ? MACOS_PRIVATE : LINUX_PRIVATE,
+        allowRead: [workspace.dir, ...workspace.readDirs, ...userToolDirs(), ...(tempDir ? [tempDir] : [])],
+        allowWrite: [workspace.dir, ...(tempDir ? [tempDir] : [])],
+        denyWrite: workspace.protectedPaths,
+      },
     },
   };
 }
+
+/** Where macOS and Linux keep users' and temporary files. */
+const MACOS_PRIVATE = ["~", "/Users", "/Volumes", "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"];
+const LINUX_PRIVATE = ["~", "/home", "/root", "/tmp", "/var/tmp", "/mnt", "/media", "/srv", "/run/user"];
+
 
 const within = (path: string, dir: string) => {
   const rel = relative(dir, path);
@@ -331,7 +346,7 @@ export function createClaudeProvider(options: ClaudeProviderOptions = {}): Provi
       }));
     },
 
-    openSession: async (context, hooks) => ClaudeSession.open(await loadSdk(), context, hooks, { env: env(context), builtIns, startupTimeoutMs }),
+    openSession: async (context, hooks) => ClaudeSession.open(await loadSdk(), context, hooks, { env: env(context), builtIns, startupTimeoutMs, platform: options.platform ?? process.platform }),
   };
 }
 
@@ -356,11 +371,13 @@ class ClaudeSession implements ProviderSession {
     private readonly log: ScopedLog,
     private readonly hooks: SessionHooks,
     sessionId: string,
+    /** The session's own temporary folder, in a workspace with commands; removed when it ends. */
+    private readonly tempDir: string | null,
   ) {
     this.resumeId = sessionId;
   }
 
-  static async open(sdk: ClaudeSdk, context: SessionContext, hooks: SessionHooks, opts: { env: Record<string, string>; builtIns: string[]; startupTimeoutMs: number }): Promise<ClaudeSession> {
+  static async open(sdk: ClaudeSdk, context: SessionContext, hooks: SessionHooks, opts: { env: Record<string, string>; builtIns: string[]; startupTimeoutMs: number; platform: NodeJS.Platform }): Promise<ClaudeSession> {
     const sessionId = context.resumeId ?? randomUUID();
     const inbox = new Inbox();
     let session: ClaudeSession | null = null;
@@ -378,6 +395,9 @@ class ClaudeSession implements ProviderSession {
     const plugin = context.skillsDir ? skillsPlugin(context.workDir, context.skillsDir) : null;
     const served = Object.keys(servers);
     const workspace = context.workspace;
+    // A temporary folder of the session's own, short enough for Claude Code's sockets: the shared
+    // per-user one (/tmp/claude-<uid>) also holds the user's other Claude Code sessions.
+    const tempDir = workspace?.shell ? realpathSync(mkdtempSync(join(tmpdir(), "edk-"))) : null;
 
     // The one place that decides. The application's tools validate themselves and the
     // user's servers are authorized by the core; loading a skill only reads its text.
@@ -404,7 +424,7 @@ class ClaudeSession implements ProviderSession {
         ...(workspace
           ? {
               additionalDirectories: workspace.readDirs,
-              settings: workspaceSettings(workspace) as Options["settings"],
+              settings: workspaceSettings(workspace, opts.platform, tempDir ?? undefined) as Options["settings"],
               // Confines the file tools to the working directories and keeps settings files out of reach.
               extraArgs: { restricted: null },
             }
@@ -416,12 +436,12 @@ class ClaudeSession implements ProviderSession {
         canUseTool,
         includePartialMessages: true,
         persistSession: true,
-        env: opts.env,
+        env: tempDir ? { ...opts.env, CLAUDE_CODE_TMPDIR: tempDir } : opts.env,
         pathToClaudeCodeExecutable: context.detection.executable!,
         stderr: (text) => context.log.debug(`claude: ${text.trimEnd()}`),
       },
     });
-    session = new ClaudeSession(q, inbox, context.log, hooks, sessionId);
+    session = new ClaudeSession(q, inbox, context.log, hooks, sessionId, tempDir);
     session.pump = session.run();
 
     try {
@@ -463,7 +483,12 @@ class ClaudeSession implements ProviderSession {
       this.log.debug("claude close", e);
     }
     await withTimeout(this.pump, 10_000, "Claude Code did not stop in time").catch((e) => this.log.warn("claude did not stop", e));
+    this.removeTempDir();
     this.settle((p) => p.reject(new AiCliError("SESSION_CLOSED", "the session was closed")));
+  }
+
+  private removeTempDir(): void {
+    if (this.tempDir) rmSync(this.tempDir, { recursive: true, force: true });
   }
 
   /** Claude Code's own question tool: each question goes to the user, and the answers back as its input. */
@@ -493,6 +518,7 @@ class ClaudeSession implements ProviderSession {
       failure = e;
     }
     if (this.closing) return;
+    this.removeTempDir();
     const error = new AiCliError("PROVIDER_CRASHED", "Claude Code stopped unexpectedly", { cause: failure ?? undefined });
     this.hooks.exited(error);
     this.settle((p) => p.reject(error));

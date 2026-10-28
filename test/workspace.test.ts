@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -87,8 +88,12 @@ describe("workspace: Claude", () => {
   });
 
   it("confines Bash to the workspace and denies writes to protected paths and extra folders", () => {
-    const settings = workspaceSettings(workspace()) as any;
-    expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, filesystem: { denyRead: ["~", "/Volumes"], allowRead: ["/w/deck", "/w/attachments"], allowWrite: ["/w/deck"], denyWrite: ["/w/deck/slides"] } });
+    const settings = workspaceSettings(workspace(), "darwin") as any;
+    expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, filesystem: { denyRead: expect.arrayContaining(["~", "/Users", "/private/var/folders", "/private/tmp"]), allowWrite: ["/w/deck"], denyWrite: ["/w/deck/slides"] } });
+    // Reads: the workspace, its extras and the system's files, never temporary or other users' files.
+    expect(settings.sandbox.filesystem.allowRead).toEqual(expect.arrayContaining(["/w/deck", "/w/attachments"]));
+    expect(settings.sandbox.filesystem.allowRead.some((p: string) => /^\/(private\/)?(tmp|var\/folders)\/?$|^\/Users\/?$/.test(p))).toBe(false);
+    expect((workspaceSettings(workspace(), "linux") as any).sandbox.filesystem.denyRead).toEqual(expect.arrayContaining(["~", "/home", "/tmp"]));
     expect(settings.permissions.deny).toEqual(expect.arrayContaining(["Write(//w/deck/slides/**)", "Edit(//w/deck/slides)", "Write(//w/attachments/**)"]));
     expect(settings.permissions.blockReadsOutsideWorkingDirectories).toBe(true);
     // Native Windows: no sandbox to require, and rules in POSIX form.
@@ -128,6 +133,26 @@ describe("workspace: Claude", () => {
       const allowed = await options.canUseTool!("Write", { file_path: join(dir, "media", "x.svg") }, {} as never);
       const refused = await options.canUseTool!("Write", { file_path: join(dir, "slides", "s1.json") }, {} as never);
       expect([allowed?.behavior, refused?.behavior]).toEqual(["allow", "deny"]);
+    } finally {
+      await ai.dispose();
+    }
+  });
+});
+
+describe("workspace: Claude's temporary folder", () => {
+  it("with commands, the session has a temporary folder of its own, writable in the sandbox and removed at the end", async () => {
+    const fake = fakeClaudeSdk();
+    const ai = createAiCli({ appId: "slides", dataDir: await tempDir(), providers: [createClaudeProvider({ executable: FAKE_CLAUDE, loadSdk: fake.loadSdk, platform: "darwin" })] });
+    try {
+      const account = await ai.createAccount({ providerId: "claude" });
+      await ai.connectAccount(account.id);
+      const session = await ai.openSession({ accountId: account.id, documentId: "deck", workspace: { dir: await deck() } });
+      const options = fake.calls.at(-1)!;
+      const temp = options.env!.CLAUDE_CODE_TMPDIR!;
+      expect(existsSync(temp)).toBe(true);
+      expect((options.settings as any).sandbox.filesystem).toMatchObject({ allowWrite: expect.arrayContaining([temp]), allowRead: expect.arrayContaining([temp]) });
+      await session.close();
+      expect(existsSync(temp)).toBe(false);
     } finally {
       await ai.dispose();
     }
