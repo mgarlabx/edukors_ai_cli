@@ -1,6 +1,8 @@
 node_modules/
 dist/
+docs/
 .sandbox/
 coverage/
 *.log
 .DS_Store
+.gitignore
