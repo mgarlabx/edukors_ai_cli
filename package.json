@@ -1,6 +1,6 @@
 {
   "name": "@edukors/ai-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shared integration between EDUKORS editors and installed AI provider CLIs: accounts, sessions, tools and normalized events.",
   "license": "MIT",
   "type": "module",
@@ -43,8 +43,8 @@
     }
   },
   "bin": {
-    "edukors-ai": "./dist/cli/main.js",
-    "edukors-ai-host": "./dist/host/main.js"
+    "edukors-ai": "dist/cli/main.js",
+    "edukors-ai-host": "dist/host/main.js"
   },
   "files": [
     "dist",

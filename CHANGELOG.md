@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.1
+
+- First version published to npm. The executables (`edukors-ai`, `edukors-ai-host`) are declared without a leading `./`, which npm would otherwise drop.
+
+## 0.1.0 (not published to npm)
 
 - Provider adapter contract, normalized events and stable error codes.
 - Shared, versioned account registry with atomic writes and cross-process locking.

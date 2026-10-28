@@ -13,7 +13,7 @@ The library handles CLI discovery, accounts, provider processes, sessions, inter
 ## Installing
 
 ```sh
-npm install @edukors/ai-cli@0.1.0
+npm install @edukors/ai-cli@0.1.1
 ```
 
 Applications pin an exact version and commit their lockfile; a release of the library changes no installed application.
