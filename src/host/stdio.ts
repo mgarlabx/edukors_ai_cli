@@ -61,6 +61,9 @@ const METHODS = {
     resumeId: z.string().optional(),
     mcpServers: z.record(z.string(), z.unknown()).optional(),
     skillsDir: z.string().optional(),
+    workspace: z
+      .object({ dir: z.string(), readDirs: z.array(z.string()).optional(), protect: z.array(z.string()).optional(), web: z.boolean().optional(), shell: z.boolean().optional() })
+      .optional(),
   }),
   "session.send": SessionRef.extend({ text: z.string(), requestId: z.string().optional(), context: z.string().optional() }),
   "session.interrupt": SessionRef,
@@ -197,6 +200,7 @@ export function runStdioHost({ ai, input, output, toolTimeoutMs = 120_000 }: Std
           resumeId: p.resumeId,
           ...(p.mcpServers ? { mcpServers: p.mcpServers } : {}),
           ...(p.skillsDir ? { skillsDir: p.skillsDir } : {}),
+          ...(p.workspace ? { workspace: p.workspace } : {}),
           authorize: ({ signal: _signal, ...request }) =>
             askApp(
               "tool.authorize",

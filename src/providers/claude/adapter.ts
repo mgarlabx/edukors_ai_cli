@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import type { CanUseTool, EffortLevel, Options, Query, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { AiCliError, toAiCliError } from "../../errors.js";
@@ -48,8 +48,68 @@ import type {
   TurnInput,
   TurnOutcome,
   TurnSink,
+  Workspace,
 } from "../../provider.js";
 import { interpret } from "./events.js";
+
+/** Claude Code's file tools: confined to the working directories by --restricted, and checked again here. */
+const READ_TOOLS = ["Read", "Glob", "Grep"];
+const WRITE_TOOLS = ["Write", "Edit", "NotebookEdit"];
+const WEB_TOOLS = ["WebFetch", "WebSearch"];
+
+/** The built-in tools a workspace adds. */
+export function workspaceTools(workspace: Workspace): string[] {
+  return [...READ_TOOLS, ...WRITE_TOOLS, ...(workspace.web ? WEB_TOOLS : []), ...(workspace.shell ? ["Bash"] : [])];
+}
+
+/** A permission rule's absolute path: `//path`, and Windows paths in POSIX form (`C:\\x` → `//c/x`). */
+const rulePath = (p: string) => "/" + p.replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_, d: string) => "/" + d.toLowerCase());
+
+/**
+ * The settings of a workspace session (the flag layer, above everything but
+ * managed settings): its tools allowed, writes to the protected paths and the
+ * extra folders denied, and commands in Claude Code's sandbox, which reads
+ * only the workspace and its extra folders in the home folder and writes only
+ * the workspace.
+ */
+export function workspaceSettings(workspace: Workspace): Record<string, unknown> {
+  const readOnly = [...workspace.protectedPaths, ...workspace.readDirs].map(rulePath);
+  const deny = readOnly.flatMap((p) => WRITE_TOOLS.flatMap((t) => [`${t}(${p})`, `${t}(${p}/**)`]));
+  const permissions = { allow: workspaceTools(workspace), deny, blockReadsOutsideWorkingDirectories: true };
+  if (!workspace.shell) return { permissions };
+  return {
+    permissions,
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      autoAllowBashIfSandboxed: true,
+      allowUnsandboxedCommands: false,
+      filesystem: { denyRead: ["~", "/Volumes"], allowRead: [workspace.dir, ...workspace.readDirs], allowWrite: [workspace.dir], denyWrite: workspace.protectedPaths },
+    },
+  };
+}
+
+const within = (path: string, dir: string) => {
+  const rel = relative(dir, path);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+};
+
+/** The decision for a workspace tool that reaches the permission handler. */
+export function workspaceDecision(workspace: Workspace, toolName: string, input: Record<string, unknown>): string | null {
+  if (WEB_TOOLS.includes(toolName)) return workspace.web ? null : "The web is not available here.";
+  // Commands that are not auto-allowed are those the sandbox would not confine.
+  if (toolName === "Bash") return "Commands run only in the sandbox here.";
+  const writes = WRITE_TOOLS.includes(toolName);
+  if (!writes && !READ_TOOLS.includes(toolName)) return "This tool is not available here.";
+  const raw = [input.file_path, input.notebook_path, input.path].find((v) => typeof v === "string") as string | undefined;
+  const path = raw === undefined ? workspace.dir : isAbsolute(raw) ? raw : join(workspace.dir, raw);
+  if (writes) {
+    if (!within(path, workspace.dir) || workspace.readDirs.some((d) => within(path, d))) return "Files can be written only in the working folder.";
+    if (workspace.protectedPaths.some((p) => within(path, p))) return "That path belongs to the application; it changes only through the application's tools.";
+    return null;
+  }
+  return [workspace.dir, ...workspace.readDirs].some((d) => within(path, d)) ? null : "Files can be read only in the working folder.";
+}
 
 /**
  * Claude Code, through the Claude Agent SDK driving the user's own `claude`.
@@ -77,6 +137,8 @@ export interface ClaudeProviderOptions {
   /** For tests: where to look for `claude`. */
   searchEnv?: NodeJS.ProcessEnv;
   startupTimeoutMs?: number;
+  /** For tests: the platform the capabilities describe. */
+  platform?: NodeJS.Platform;
 }
 
 export interface ClaudeSdk {
@@ -184,6 +246,9 @@ export function createClaudeProvider(options: ClaudeProviderOptions = {}): Provi
     tools: true,
     questions: builtIns.includes("AskUserQuestion"),
     liveOptions: true,
+    workspace: true,
+    // Native Windows has no sandbox to confine commands: there a workspace has files and web only.
+    workspaceShell: (options.platform ?? process.platform) !== "win32",
   };
 
   /** A query with no prompt yet: it starts Claude Code and initializes, without a model call. */
@@ -312,6 +377,7 @@ class ClaudeSession implements ProviderSession {
     }
     const plugin = context.skillsDir ? skillsPlugin(context.workDir, context.skillsDir) : null;
     const served = Object.keys(servers);
+    const workspace = context.workspace;
 
     // The one place that decides. The application's tools validate themselves and the
     // user's servers are authorized by the core; loading a skill only reads its text.
@@ -319,18 +385,30 @@ class ClaudeSession implements ProviderSession {
       if (served.some((name) => toolName.startsWith(`mcp__${name}__`))) return { behavior: "allow", updatedInput: input };
       if (toolName === "Skill" && plugin) return { behavior: "allow", updatedInput: input };
       if (toolName === "AskUserQuestion") return session ? session.answerQuestions(input) : { behavior: "deny", message: "No request is active." };
+      if (workspace && workspaceTools(workspace).includes(toolName)) {
+        const refusal = workspaceDecision(workspace, toolName, input);
+        return refusal ? { behavior: "deny", message: refusal } : { behavior: "allow", updatedInput: input };
+      }
       return { behavior: "deny", message: "This tool is not available here." };
     };
 
     const q = sdk.query({
       prompt: inbox,
       options: {
-        cwd: context.workDir,
+        cwd: workspace?.dir ?? context.workDir,
         ...(context.resumeId ? { resume: context.resumeId } : { sessionId }),
         ...(context.options.model ? { model: context.options.model } : {}),
         ...(context.options.effort ? { effort: context.options.effort as EffortLevel } : {}),
         ...(context.instructions ? { systemPrompt: context.instructions } : {}),
-        tools: plugin ? [...opts.builtIns, "Skill"] : opts.builtIns,
+        tools: [...opts.builtIns, ...(workspace ? workspaceTools(workspace) : []), ...(plugin ? ["Skill"] : [])],
+        ...(workspace
+          ? {
+              additionalDirectories: workspace.readDirs,
+              settings: workspaceSettings(workspace) as Options["settings"],
+              // Confines the file tools to the working directories and keeps settings files out of reach.
+              extraArgs: { restricted: null },
+            }
+          : {}),
         mcpServers: servers,
         ...(plugin ? { plugins: [{ type: "local" as const, path: plugin.path }], skills: plugin.ids } : {}),
         strictMcpConfig: true,

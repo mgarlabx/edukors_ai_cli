@@ -13,6 +13,9 @@
 //                         with questions, then sleeps until turn/steer answers
 //   ask-blocking          asks the user through item/tool/requestUserInput
 //   comando               asks to run a command and reports the decision
+//   sandbox               reports how the session was set up (cwd, sandbox, approvals, web)
+//   run <shell command>   asks to run it; if allowed, runs it with /bin/sh in the
+//                         turn's folder, as Codex does in an external sandbox
 //   slow                  streams until interrupted
 //   late                  after an interruption, still sends stale text
 //   crash                 exits in the middle of the turn
@@ -25,8 +28,7 @@ import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { spawnSync } from "node:child_process";
 
 const args = process.argv.slice(2);
 if (args.includes("--version")) {
@@ -71,6 +73,13 @@ if (args[0] !== "app-server") {
   process.exit(2);
 }
 
+// The MCP client loads only when a tool is called: inside the macOS sandbox of a
+// workspace session, the fixture's own node_modules are out of reach.
+const mcpClient = async () => ({
+  Client: (await import("@modelcontextprotocol/sdk/client/index.js")).Client,
+  StreamableHTTPClientTransport: (await import("@modelcontextprotocol/sdk/client/streamableHttp.js")).StreamableHTTPClientTransport,
+});
+
 // -c key=value overrides, values in TOML (strings are JSON-compatible here).
 const config = {};
 for (let i = 0; i < args.length; i++)
@@ -97,6 +106,7 @@ async function callTool(name, toolArgs, server = "edukors") {
     const url = config[`mcp_servers.${server}.url`];
     const token = process.env[config[`mcp_servers.${server}.bearer_token_env_var`] ?? ""];
     if (!url) return { text: `no MCP server ${server}`, isError: true };
+    const { Client, StreamableHTTPClientTransport } = await mcpClient();
     const client = new Client({ name: "fake-codex", version: "0.164.0" });
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
     clients.set(server, client);
@@ -146,7 +156,7 @@ async function handle(msg) {
     case "account/rateLimits/read":
       return reply(id, { rateLimits: { primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 2000000000 }, secondary: { usedPercent: 10, windowDurationMins: 10080 } } });
     case "thread/start":
-      thread = { id: randomUUID(), turns: [], instructions: params.baseInstructions ?? null, developer: params.developerInstructions ?? null, sandbox: params.sandbox, approvalPolicy: params.approvalPolicy };
+      thread = { id: randomUUID(), turns: [], instructions: params.baseInstructions ?? null, developer: params.developerInstructions ?? null, sandbox: params.sandbox, approvalPolicy: params.approvalPolicy, cwd: params.cwd };
       saveThread();
       return reply(id, { thread: { id: thread.id }, model: params.model ?? "gpt-fake" });
     case "thread/resume": {
@@ -158,7 +168,7 @@ async function handle(msg) {
       return reply(id, { thread: { id: thread.id }, model: "gpt-fake" });
     }
     case "turn/start": {
-      const turn = { id: `turn_${++turnCount}_${randomUUID().slice(0, 8)}`, interrupted: false, model: params.model ?? null, effort: params.effort ?? null };
+      const turn = { id: `turn_${++turnCount}_${randomUUID().slice(0, 8)}`, interrupted: false, model: params.model ?? null, effort: params.effort ?? null, cwd: params.cwd ?? thread.cwd, sandboxPolicy: params.sandboxPolicy ?? null };
       current = turn;
       if (thread.replay) {
         notify("thread/tokenUsage/updated", { threadId: thread.id, turnId: thread.replay, tokenUsage: { last: { inputTokens: 999, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 999 }, total: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 } } });
@@ -234,6 +244,17 @@ async function runTurn(turn, text) {
     const res = await askClient("item/tool/requestUserInput", { ...base, itemId: "q", isBlocking: true, questions: [{ id: "color", header: "Color", question: "Which color?", options: [{ label: "red", description: "" }, { label: "blue", description: "" }] }] });
     if (!res || turn.interrupted) return end("interrupted");
     answer = `You chose ${res.answers?.color?.answers?.[0] ?? "nothing"}`;
+  } else if (/^sandbox$/.test(text)) {
+    answer = JSON.stringify({ threadCwd: thread.cwd ?? null, approvalPolicy: thread.approvalPolicy ?? null, sandbox: thread.sandbox ?? null, turnCwd: turn.cwd ?? null, sandboxPolicy: turn.sandboxPolicy, webSearch: config.web_search ?? null, tmp: process.env.TMPDIR ?? null, processCwd: process.cwd() });
+  } else if (/^run /.test(text)) {
+    const command = text.slice(4);
+    // Approval is asked unless the policy is never, as Codex does.
+    const decision = thread.approvalPolicy === "never" ? "accept" : (await askClient("item/commandExecution/requestApproval", { ...base, itemId: "c", command }))?.decision;
+    if (decision !== "accept") answer = `Command ${decision}`;
+    else {
+      const r = spawnSync("/bin/sh", ["-c", command], { cwd: turn.cwd ?? process.cwd(), encoding: "utf8" });
+      answer = `exit ${r.status}: ${(r.stdout + r.stderr).trim()}`;
+    }
   } else if (/comando/.test(text)) {
     const res = await askClient("item/commandExecution/requestApproval", { ...base, itemId: "c", command: "ls" });
     answer = `Command ${res?.decision}`;

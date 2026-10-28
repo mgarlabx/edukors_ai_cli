@@ -13,7 +13,7 @@ The library handles CLI discovery, accounts, provider processes, sessions, inter
 ## Installing
 
 ```sh
-npm install @edukors/ai-cli@0.1.1
+npm install @edukors/ai-cli@0.2.0
 ```
 
 Applications pin an exact version and commit their lockfile; a release of the library changes no installed application.
@@ -91,6 +91,32 @@ Every editor's AI settings screen has the same layout (see section 6 of `edukors
 The library connects to the user's servers itself and offers their tools to either provider. A provider is never handed a server directly: every call goes through `authorize`, and is reported as `toolStarted`/`toolCompleted` (`mcp__<server>__<tool>`). Without `authorize`, such calls are denied. Server status is reported once as `mcpServerStatus` events.
 
 Claude Code loads the skills natively, through a local plugin. Codex would need shell commands to read them, so the library serves them through a `read_skill` tool confined to each skill's folder, and lists them in the session's developer instructions. In both cases the provider's own skills and the user's personal ones are switched off.
+
+### Workspace: an agent that works in a folder
+
+An editor whose documents are folders of files (the Slides editor's presentations) can let the agent work there with the provider's own tools:
+
+```ts
+const session = await ai.openSession({
+  accountId, documentId, tools,
+  workspace: {
+    dir: "/abs/path/to/presentation",     // the agent's working directory
+    readDirs: ["/abs/path/to/attachments"], // read-only extras
+    protect: ["manifest.json", "slides"],   // the application's own files: read, never written
+    web: true,                              // web search and fetch (default true)
+    shell: true,                            // commands, where a sandbox confines them (default true)
+  },
+});
+```
+
+The agent reads only the workspace, its `readDirs` and what the system needs; it writes only the workspace, never a protected path; nothing else of the user's is in reach. The application's own files still change only through its tools, which validate them.
+
+| Provider | Files | Web | Commands | Confinement |
+| --- | --- | --- | --- | --- |
+| Claude | ✓ | ✓ | macOS, Linux | Claude Code's `--restricted` mode, permission rules, and its sandbox for commands (`failIfUnavailable`). Native Windows: files and web only (`workspaceShell: false`) |
+| Codex | ✓ | ✓ | macOS | The macOS system sandbox around the app server; Codex runs its commands as in an external sandbox. Not offered elsewhere (`workspace: false`), since Codex's own sandbox cannot keep reads in the folder |
+
+Check `capabilities.workspace` and `capabilities.workspaceShell` before offering the choice. Asking for a workspace where the provider has none fails with `CAPABILITY_UNSUPPORTED`; asking for commands where it cannot confine them gives a workspace without commands.
 
 ### Guarantees
 

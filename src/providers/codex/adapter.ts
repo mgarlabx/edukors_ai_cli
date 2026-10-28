@@ -1,3 +1,5 @@
+import { mkdirSync, realpathSync } from "node:fs";
+import { join } from "node:path";
 import { AiCliError, toAiCliError } from "../../errors.js";
 import { fromWindows, type LimitWindow, type Usage } from "../../events.js";
 import type { ScopedLog } from "../../diagnostics.js";
@@ -6,6 +8,7 @@ import { compareVersions, findExecutable, readVersion } from "../../platform/dis
 import { buildEnv } from "../../platform/env.js";
 import { runLoginCommand } from "../../platform/login.js";
 import { ManagedProcess, runCommand } from "../../platform/process.js";
+import { runtimeDirs, sandboxed } from "../../platform/sandbox.js";
 import type {
   AccountContext,
   AccountStatus,
@@ -20,6 +23,7 @@ import type {
   TurnInput,
   TurnOutcome,
   TurnSink,
+  Workspace,
 } from "../../provider.js";
 import { VERSION } from "../../version.js";
 import { listSkills, READ_SKILL_TOOL, readSkillFile, readSkillSpec, skillsInstructions } from "../../skills.js";
@@ -35,6 +39,11 @@ import { attachRpc, type Rpc } from "./rpc.js";
  * 127.0.0.1 (agent bridge), given on the command line with `-c` so that two
  * documents on the same account never share or rewrite a config file; the
  * bridge token travels in the environment, not in argv.
+ *
+ * In a workspace (macOS only), the app server runs inside the system
+ * sandbox (platform/sandbox.ts), which confines Codex and every command it
+ * runs to the workspace; Codex is told its commands already run in an
+ * external sandbox, since it cannot apply its own inside another.
  */
 
 export interface CodexProviderOptions {
@@ -45,6 +54,13 @@ export interface CodexProviderOptions {
   /** For tests: where to look for `codex`. */
   searchEnv?: NodeJS.ProcessEnv;
   startupTimeoutMs?: number;
+  /** For tests: the platform the capabilities describe. */
+  platform?: NodeJS.Platform;
+  /**
+   * For tests: runs the app server without the system sandbox. The
+   * workspace is then not confined; never set in an application.
+   */
+  unconfinedWorkspace?: boolean;
 }
 
 /** The version this adapter's protocol use was checked against (docs/compatibility.md). */
@@ -112,6 +128,9 @@ export function createCodexProvider(options: CodexProviderOptions = {}): Provide
     tools: true,
     questions: true,
     liveOptions: true,
+    // Confinement comes from the macOS sandbox; elsewhere Codex's own cannot keep reads in the workspace.
+    workspace: (options.platform ?? process.platform) === "darwin",
+    workspaceShell: (options.platform ?? process.platform) === "darwin",
   };
 
   /** A short-lived app server, for questions that need no conversation. */
@@ -202,7 +221,25 @@ export function createCodexProvider(options: CodexProviderOptions = {}): Provide
         return limits ? { ...limits, observedAt: new Date().toISOString() } : null;
       }),
 
-    openSession: (context, hooks) => CodexSession.open(context, hooks, env, startupTimeoutMs),
+    openSession: (context, hooks) => CodexSession.open(context, hooks, env, startupTimeoutMs, options.unconfinedWorkspace ?? false),
+  };
+}
+
+/** What the app server reads and writes inside the system sandbox. */
+function sandboxPaths(context: SessionContext, workspace: Workspace) {
+  // The sandbox sees real paths (on macOS, /var is /private/var).
+  const real = (p: string) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const executable = context.detection.executable!;
+  return {
+    writable: [workspace.dir, real(context.homeDir), real(context.workDir)],
+    readable: [...workspace.readDirs, ...(context.skillsDir ? [real(context.skillsDir)] : []), ...runtimeDirs(executable, real(executable))],
+    protectedPaths: workspace.protectedPaths,
   };
 }
 
@@ -234,6 +271,7 @@ class CodexSession implements ProviderSession {
   private bridged = new Set<string>();
   /** Added to Codex's own instructions (unlike baseInstructions, which replaces them). */
   private developerInstructions = "";
+  private workspace: Workspace | null = null;
 
   private constructor(
     private readonly proc: ManagedProcess,
@@ -245,7 +283,13 @@ class CodexSession implements ProviderSession {
     this.options = { ...options };
   }
 
-  static async open(context: SessionContext, hooks: SessionHooks, env: (c: AccountContext, extra?: Record<string, string>) => Record<string, string>, startupTimeoutMs: number): Promise<CodexSession> {
+  static async open(
+    context: SessionContext,
+    hooks: SessionHooks,
+    env: (c: AccountContext, extra?: Record<string, string>) => Record<string, string>,
+    startupTimeoutMs: number,
+    unconfined: boolean,
+  ): Promise<CodexSession> {
     let session: CodexSession | null = null;
     const idle = Promise.resolve({ content: "No request is active.", isError: true });
     // Codex reads native skills with shell commands, which an editor session refuses:
@@ -281,8 +325,19 @@ class CodexSession implements ProviderSession {
     const args = ["app-server"];
     for (const { name } of served)
       args.push("-c", `mcp_servers.${name}.url=${tomlString(bridge!.urlFor(name))}`, "-c", `mcp_servers.${name}.bearer_token_env_var=${tomlString(TOKEN_VAR)}`);
-    const proc = new ManagedProcess({ file: context.detection.executable!, args, env: env(context, bridge ? { [TOKEN_VAR]: bridge.token } : {}), cwd: context.workDir });
+    if (context.workspace) args.push("-c", `web_search=${tomlString(context.workspace.web ? "live" : "disabled")}`);
+    const extra: Record<string, string> = bridge ? { [TOKEN_VAR]: bridge.token } : {};
+    let command = { file: context.detection.executable!, args };
+    if (context.workspace) {
+      // Temporary files stay in the session's own scratch space, which the sandbox lets it write.
+      const tmp = join(context.workDir, "tmp");
+      mkdirSync(tmp, { recursive: true, mode: 0o700 });
+      Object.assign(extra, { TMPDIR: tmp, TMP: tmp, TEMP: tmp });
+      if (!unconfined) command = sandboxed(command.file, command.args, sandboxPaths(context, context.workspace));
+    }
+    const proc = new ManagedProcess({ ...command, env: env(context, extra), cwd: context.workspace?.dir ?? context.workDir });
     session = new CodexSession(proc, bridge, context.log, hooks, context.options);
+    session.workspace = context.workspace ?? null;
     session.bridged = new Set(served.map((s) => s.name));
     session.developerInstructions = ownTools.includes(readSkillSpec) ? skillsInstructions(skills) : "";
     try {
@@ -302,17 +357,19 @@ class CodexSession implements ProviderSession {
     await initialize(this.rpc, timeoutMs);
     const read = await this.rpc.request("account/read", { refreshToken: false }, timeoutMs);
     if (!read?.account) throw new AiCliError("ACCOUNT_DISCONNECTED", "Codex is not signed in on this account");
-    await this.disableSkills(context.workDir);
+    const cwd = this.workspace?.dir ?? context.workDir;
+    await this.disableSkills(cwd);
     const common = {
-      approvalPolicy: "untrusted",
-      sandbox: "read-only",
+      // In a workspace with commands, the system sandbox decides: nothing is put to the user.
+      approvalPolicy: this.workspace?.shell ? "never" : "untrusted",
+      ...(this.workspace ? {} : { sandbox: "read-only" }),
       ...(context.instructions ? { baseInstructions: context.instructions } : {}),
       ...(this.developerInstructions ? { developerInstructions: this.developerInstructions } : {}),
       ...(context.options.model ? { model: context.options.model } : {}),
     };
     const thread = context.resumeId
       ? await this.rpc.request("thread/resume", { threadId: context.resumeId, ...common }, 60_000)
-      : await this.rpc.request("thread/start", { cwd: context.workDir, ...common }, 60_000);
+      : await this.rpc.request("thread/start", { cwd, ...common }, 60_000);
     const id = thread?.thread?.id;
     if (typeof id !== "string" || !id) throw new AiCliError("PROVIDER_PROTOCOL", "Codex opened no thread");
     this.resumeId = id;
@@ -346,6 +403,7 @@ class CodexSession implements ProviderSession {
         {
           threadId: this.resumeId,
           input: [{ type: "text", text }],
+          ...(this.workspace ? { cwd: this.workspace.dir, sandboxPolicy: { type: "externalSandbox", networkAccess: this.workspace.web ? "enabled" : "restricted" } } : {}),
           ...(this.options.model ? { model: this.options.model } : {}),
           ...(this.options.effort ? { effort: this.options.effort } : {}),
         },
@@ -455,13 +513,16 @@ class CodexSession implements ProviderSession {
 
   private async onRequest(method: string, params: any): Promise<unknown> {
     switch (method) {
-      // No shell and no file writes in an editor session: declined, and Codex is told so.
+      // Without a workspace, no shell and no file writes: declined, and Codex is told so. In a
+      // workspace, the system sandbox confines writes, and commands run only when it has them.
       case "item/commandExecution/requestApproval":
+        return { decision: this.workspace?.shell ? "accept" : "decline" };
       case "item/fileChange/requestApproval":
-        return { decision: "decline" };
+        return { decision: this.workspace ? "accept" : "decline" };
       case "execCommandApproval":
+        return { decision: this.workspace?.shell ? "approved" : "denied" };
       case "applyPatchApproval":
-        return { decision: "denied" };
+        return { decision: this.workspace ? "approved" : "denied" };
       case "item/permissions/requestApproval":
         return { permissions: {} };
       // Codex asks before calling an MCP server; the application's tools decide for themselves.
