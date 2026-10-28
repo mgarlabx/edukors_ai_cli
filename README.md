@@ -78,6 +78,8 @@ const session = await ai.openSession({
 });
 ```
 
+Every editor's AI settings screen has the same layout (see section 6 of `edukors_ai_cli_plan.md`): **Accounts** at the top, and under **Advanced** always *Instructions for the agent*, *MCP servers* and *Skills*. `parseMcpConfig(text)` validates the MCP JSON (`{ "mcpServers": { ... } }` or the bare object, `timeout` in milliseconds) and returns every problem as a stable code; `listSkills(dir)` lists the skills folder for display.
+
 The library connects to the user's servers itself and offers their tools to either provider. A provider is never handed a server directly: every call goes through `authorize`, and is reported as `toolStarted`/`toolCompleted` (`mcp__<server>__<tool>`). Without `authorize`, such calls are denied. Server status is reported once as `mcpServerStatus` events.
 
 Claude Code loads the skills natively, through a local plugin. Codex would need shell commands to read them, so the library serves them through a `read_skill` tool confined to each skill's folder, and lists them in the session's developer instructions. In both cases the provider's own skills and the user's personal ones are switched off.

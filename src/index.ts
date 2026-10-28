@@ -3,6 +3,10 @@ export type { AccountInfo, AiCliOptions, DiagnosticReport, OpenSessionOptions } 
 export { AiSession } from "./session.js";
 export type { AuthorizationDecision, AuthorizationRequest, Authorizer, SendOptions, SessionState, TurnResult } from "./session.js";
 export { checkServers, McpServerSpecSchema } from "./mcp/external.js";
+export { parseMcpConfig } from "./mcp/config.js";
+export type { McpProblem, McpProblemCode } from "./mcp/config.js";
+export { listSkills, readSkillFile } from "./skills.js";
+export type { SkillInfo } from "./skills.js";
 export type { McpServerSpec } from "./mcp/external.js";
 export { AiCliError, ERROR_CODES, isAiCliError, toAiCliError } from "./errors.js";
 export type { ErrorCode, ErrorMeta, SerializedError } from "./errors.js";

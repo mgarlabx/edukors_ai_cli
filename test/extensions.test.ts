@@ -219,3 +219,36 @@ describe("over the stdio host", () => {
     await host.closed;
   });
 });
+
+describe("settings: MCP configuration", () => {
+  it("accepts the .mcp.json shape or a bare object, and reports every problem", async () => {
+    const { parseMcpConfig } = await import("../src/index.js");
+    const text = JSON.stringify({
+      mcpServers: {
+        files: { command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/Courses"] },
+        docs: { type: "http", url: "https://example.org/mcp", timeout: 30000 },
+        edukors: { command: "x" },
+        "my.server": { command: "x" },
+        nourl: { type: "sse", url: "ftp://x" },
+        weird: { type: "websocket", url: "wss://x" },
+        badargs: { command: "x", args: "not-a-list" },
+      },
+    });
+    const { servers, problems } = parseMcpConfig(text);
+    expect(servers).toEqual({
+      files: { type: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/Courses"] },
+      docs: { type: "http", url: "https://example.org/mcp", timeout: 30000 },
+    });
+    expect(problems).toEqual([
+      { code: "reserved", server: "edukors" },
+      { code: "badName", server: "my.server" },
+      { code: "noUrl", server: "nourl" },
+      { code: "badType", server: "weird", detail: "websocket" },
+      { code: "badField", server: "badargs", field: "args" },
+    ]);
+    expect(parseMcpConfig('{ "a": { "command": "x" } }').servers).toEqual({ a: { type: "stdio", command: "x" } });
+    expect(parseMcpConfig("").problems).toEqual([]);
+    expect(parseMcpConfig("{ nope").problems[0]).toMatchObject({ code: "notJson" });
+    expect(parseMcpConfig("[1]").problems).toEqual([{ code: "notServers" }]);
+  });
+});

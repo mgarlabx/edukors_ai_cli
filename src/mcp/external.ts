@@ -20,19 +20,20 @@ import { VERSION } from "../version.js";
  * server itself: a CLI in headless mode would call it unchecked.
  */
 
+/** `timeout` is in milliseconds, as in Claude Code's `.mcp.json`. */
 export const McpServerSpecSchema = z.union([
   z.object({
     type: z.literal("stdio").optional(),
     command: z.string().min(1),
     args: z.array(z.string()).optional(),
     env: z.record(z.string(), z.string()).optional(),
-    timeoutMs: z.number().int().positive().optional(),
+    timeout: z.number().positive().optional(),
   }),
   z.object({
     type: z.enum(["http", "sse"]),
     url: z.url({ protocol: /^https?$/ }),
     headers: z.record(z.string(), z.string()).optional(),
-    timeoutMs: z.number().int().positive().optional(),
+    timeout: z.number().positive().optional(),
   }),
 ]);
 
@@ -136,7 +137,7 @@ export class ExternalServers {
         })(),
         CONNECT_TIMEOUT_MS,
       );
-      this.connections.set(name, { name, client, tools, timeoutMs: spec.timeoutMs ?? CALL_TIMEOUT_MS });
+      this.connections.set(name, { name, client, tools, timeoutMs: spec.timeout ?? CALL_TIMEOUT_MS });
       this.log.info(`mcp ${name} connected`, { tools: tools.length });
       return { server: name, status: "connected", tools: tools.length };
     } catch (e) {
