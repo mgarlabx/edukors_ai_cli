@@ -14,6 +14,8 @@ export interface ToolResult {
 export interface ToolCallContext {
   documentId: string;
   requestId: string;
+  /** The `callId` of this call's toolStarted/toolCompleted events. */
+  callId: string;
   /** Aborted when the request is interrupted or the session closes. */
   signal: AbortSignal;
 }

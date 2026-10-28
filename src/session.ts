@@ -43,6 +43,8 @@ interface Turn {
 /** What the application decides about a call to one of the user's MCP servers. */
 export interface AuthorizationRequest {
   kind: "mcp";
+  /** The `callId` of this call's toolStarted/toolCompleted events. */
+  callId: string;
   server: string;
   tool: string;
   input: Record<string, unknown>;
@@ -338,7 +340,7 @@ export class AiSession {
       value = checked.value;
     }
     try {
-      const result = await tool.run(value, { documentId: this.documentId, requestId: turn.requestId, signal: turn.abort.signal });
+      const result = await tool.run(value, { documentId: this.documentId, requestId: turn.requestId, callId, signal: turn.abort.signal });
       // Reported even after an interruption: the application did run it.
       this.emit({ type: "toolCompleted", callId, tool: name, ok: !result.isError, ...(result.isError ? { errorCode: "TOOL_FAILED" } : {}) }, turn.requestId);
       return result;
@@ -364,7 +366,7 @@ export class AiSession {
     const input = args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
     try {
       const decision = this.deps.authorize
-        ? await this.deps.authorize({ kind: "mcp", server, tool, input, documentId: this.documentId, requestId: turn.requestId, signal: turn.abort.signal })
+        ? await this.deps.authorize({ kind: "mcp", callId, server, tool, input, documentId: this.documentId, requestId: turn.requestId, signal: turn.abort.signal })
         : ({ allow: false, message: "This application does not allow calls to MCP servers." } as const);
       if (!decision.allow) return fail("TOOL_DENIED", decision.message || "The user declined this action.");
       if (!live()) return fail("CANCELLED", "The request was cancelled; the tool was not run.");

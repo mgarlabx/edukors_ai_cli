@@ -19,6 +19,10 @@
     "./host": {
       "types": "./dist/host/stdio.d.ts",
       "import": "./dist/host/stdio.js"
+    },
+    "./settings": {
+      "types": "./dist/settings.d.ts",
+      "import": "./dist/settings.js"
     }
   },
   "bin": {

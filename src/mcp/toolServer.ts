@@ -16,7 +16,9 @@ import { VERSION } from "../version.js";
  * session's turn sink: validation, events and cancellation stay in the core.
  */
 
-export const TOOL_SERVER_NAME = "edukors";
+import { TOOL_SERVER_NAME } from "../constants.js";
+
+export { TOOL_SERVER_NAME };
 
 export type ToolCaller = (name: string, args: unknown) => Promise<ToolResult>;
 

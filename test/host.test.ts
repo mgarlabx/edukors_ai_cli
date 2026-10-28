@@ -69,7 +69,9 @@ describe("stdio host", () => {
 
       const sent = await h.call("session.send", { sessionId: opened.sessionId, text: 'tool set_title {"title":"Física"}', requestId: "r1" });
       expect(sent.result).toEqual({ requestId: "r1", status: "completed" });
-      expect(toolCalls).toEqual([{ sessionId: opened.sessionId, requestId: "r1", documentId: "course-1", name: "set_title", args: { title: "Física" } }]);
+      expect(toolCalls).toEqual([{ sessionId: opened.sessionId, requestId: "r1", callId: expect.any(String), documentId: "course-1", name: "set_title", args: { title: "Física" } }]);
+      const started = h.events().find((e) => e.type === "toolStarted" && e.requestId === "r1");
+      expect(toolCalls[0].callId).toBe(started.callId);
       const text = h.events().filter((e) => e.type === "textDelta" && e.requestId === "r1").map((e) => e.text).join("");
       expect(text).toBe("Tool set_title said: title is now Física");
 

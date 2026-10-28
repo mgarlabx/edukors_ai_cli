@@ -47,7 +47,7 @@ describe.each(["claude", "codex"] as const)("%s: the user's MCP servers", (id) =
 
     await session.send('mcp glossary lookup {"term":"vetor"}', { requestId: "r" });
     expect(textOf(s.events, "r")).toBe("glossary.lookup said: vetor: a term from the glossary (env s3)");
-    expect(asked).toEqual([{ kind: "mcp", server: "glossary", tool: "lookup", input: { term: "vetor" }, documentId: "course-1", requestId: "r" }]);
+    expect(asked).toEqual([{ kind: "mcp", callId: expect.any(String), server: "glossary", tool: "lookup", input: { term: "vetor" }, documentId: "course-1", requestId: "r" }]);
     expect(s.events.filter((e) => e.requestId === "r" && e.type.startsWith("tool"))).toMatchObject([
       { type: "toolStarted", tool: "mcp__glossary__lookup" },
       { type: "toolCompleted", tool: "mcp__glossary__lookup", ok: true },
@@ -212,8 +212,8 @@ describe("over the stdio host", () => {
     expect(textOf(s.events, "r1")).toBe("glossary.lookup said: Ask me first. (error)");
     expect(textOf(s.events, "r2")).toBe("glossary.lookup said: b: a term from the glossary (env s3)");
     expect(authorizations).toEqual([
-      { sessionId, kind: "mcp", server: "glossary", tool: "lookup", input: { term: "a" }, documentId: "c1", requestId: "r1" },
-      { sessionId, kind: "mcp", server: "glossary", tool: "lookup", input: { term: "b" }, documentId: "c1", requestId: "r2" },
+      { sessionId, kind: "mcp", callId: expect.any(String), server: "glossary", tool: "lookup", input: { term: "a" }, documentId: "c1", requestId: "r1" },
+      { sessionId, kind: "mcp", callId: expect.any(String), server: "glossary", tool: "lookup", input: { term: "b" }, documentId: "c1", requestId: "r2" },
     ]);
     input.end();
     await host.closed;

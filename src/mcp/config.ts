@@ -1,5 +1,5 @@
+import { TOOL_SERVER_NAME } from "../constants.js";
 import type { McpServerSpec } from "./external.js";
-import { TOOL_SERVER_NAME } from "./toolServer.js";
 
 /**
  * The user's MCP servers as written in an editor's settings: the text of a

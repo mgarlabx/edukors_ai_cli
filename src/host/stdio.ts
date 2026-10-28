@@ -6,6 +6,8 @@ import { readLines } from "../platform/process.js";
 import type { AiSession } from "../session.js";
 import type { ToolDefinition, ToolResult } from "../tools.js";
 import { VERSION } from "../version.js";
+import { isAbsolute } from "node:path";
+import { listSkills } from "../skills.js";
 
 /**
  * The application-host protocol: the library behind a pipe, one JSON object
@@ -66,6 +68,8 @@ const METHODS = {
   "session.updateOptions": SessionRef.extend({ options: Options }),
   "session.close": SessionRef,
   "diagnostics.report": z.object({}),
+  /** The skills in a folder, for the settings screen. */
+  "skills.list": z.object({ dir: z.string() }),
   /** Aborts a pending request that supports it (accounts.connect). */
   cancel: z.object({ requestId: z.union([z.string(), z.number()]) }),
 } as const;
@@ -122,7 +126,7 @@ export function runStdioHost({ ai, input, output, toolTimeoutMs = 120_000 }: Std
     run: (args, context) =>
       askApp(
         "tool.call",
-        { sessionId: sessionId(), requestId: context.requestId, documentId: context.documentId, name: spec.name, args },
+        { sessionId: sessionId(), requestId: context.requestId, callId: context.callId, documentId: context.documentId, name: spec.name, args },
         (result, error): ToolResult => {
           const reply = ToolReply.safeParse(result);
           return error || !reply.success ? { content: error?.message ?? "The editor returned an invalid tool result.", isError: true } : reply.data;
@@ -225,6 +229,9 @@ export function runStdioHost({ ai, input, output, toolTimeoutMs = 120_000 }: Std
         return null;
       case "diagnostics.report":
         return ai.diagnosticReport();
+      case "skills.list":
+        if (!isAbsolute(p.dir)) throw new AiCliError("INVALID_ARGUMENT", "dir must be an absolute path");
+        return listSkills(p.dir);
       case "cancel":
         aborts.get(p.requestId)?.abort();
         return null;
