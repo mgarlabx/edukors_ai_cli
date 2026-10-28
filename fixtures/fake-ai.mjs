@@ -6,7 +6,8 @@
 //
 // Commands: --version | login --label <l> | status | logout | models | serve [--resume <id>]
 //
-// What a turn does depends on words in the request:
+// What a turn does depends on words in the request's last paragraph (an
+// editor may put its own context before the person's words):
 //   tool <name> [<json>]  calls an application tool and reports the result
 //   ask                   asks the user a question and reports the answer
 //   slow                  streams for two seconds, stopping when interrupted
@@ -129,7 +130,7 @@ async function serve() {
         break;
       case "turn":
         current = { turnId: msg.turnId, interrupted: false };
-        runTurn(current, msg.text).catch((e) => out({ type: "error", turnId: msg.turnId, code: "internal", message: String(e?.message ?? e) }));
+        runTurn(current, lastParagraph(msg.text)).catch((e) => out({ type: "error", turnId: msg.turnId, code: "internal", message: String(e?.message ?? e) }));
         break;
       case "interrupt":
         if (current) current.interrupted = true;
@@ -152,6 +153,7 @@ async function serve() {
   rl.on("close", () => process.exit(0));
 
   const wait = (id) => new Promise((resolve) => waiting.set(id, resolve));
+  const lastParagraph = (text) => text.trim().split(/\n\s*\n/).pop() ?? "";
 
   async function runTurn(turn, text) {
     const send = (m) => out({ ...m, turnId: turn.turnId });
