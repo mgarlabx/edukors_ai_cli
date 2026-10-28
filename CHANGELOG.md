@@ -8,3 +8,6 @@
 - CLI discovery, allowlisted process environment, process-tree termination, bounded output, redacted diagnostics.
 - stdio application-host protocol (`edukors-ai-host`) and terminal tool (`edukors-ai`).
 - Fake provider CLI and adapter for deterministic tests.
+- Claude adapter (Agent SDK driving the user's `claude`, one `CLAUDE_CONFIG_DIR` per account, in-process MCP tools, `AskUserQuestion` only by default).
+- Codex adapter (`codex app-server`, one `CODEX_HOME` per account, tools over an authenticated 127.0.0.1 MCP bridge passed with `-c`, commands declined, skills off).
+- Compatibility matrix (`docs/compatibility.md`).

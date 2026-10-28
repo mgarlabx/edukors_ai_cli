@@ -8,7 +8,7 @@
 
 The library handles CLI discovery, accounts, provider processes, sessions, interruption, tool routing, normalized events and redacted diagnostics. Each editor keeps its own document state, tools, validation, undo and UI.
 
-> **Status: 0.1.0, shared core.** The contract, account registry, session lifecycle, stdio host and a deterministic fake provider are implemented and tested. Real provider adapters (Claude, Codex, then the rest) have not been ported yet. See [Roadmap](#roadmap).
+> **Status: 0.1.0.** Shared core, Claude and Codex adapters, stdio host and a deterministic fake provider are implemented and tested offline. The Claude and Codex adapters have been run against the real CLIs only with signed-out accounts; sign-in, turns and account isolation still need live verification. See [docs/compatibility.md](docs/compatibility.md) and [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -22,6 +22,7 @@ npm install
 npm test                     # the full suite, no accounts needed
 npm run build
 
+# Claude and Codex are always available (they need the user's own CLI installed).
 # The fake provider is a real separate CLI process (fixtures/fake-ai.mjs).
 alias ai="node dist/cli/main.js --fake --data-dir .sandbox"
 ai providers
@@ -115,15 +116,18 @@ Implement `ProviderAdapter` (see `src/provider.ts`). `src/testing/fakeProvider.t
 | `src/platform/` | Data paths, environment, CLI discovery, process management |
 | `src/host/` | stdio application-host protocol and executable |
 | `src/cli/` | `edukors-ai` terminal tool |
-| `src/testing/`, `fixtures/` | Fake provider adapter and fake CLI |
+| `src/providers/claude/`, `src/providers/codex/` | Provider adapters |
+| `src/mcp/` | The application's tools as an MCP server (in-process or local HTTP bridge) |
+| `src/testing/`, `fixtures/` | Fake provider adapter and fake CLIs (`fake-ai`, `fake-claude`, `fake-codex`) |
 
 ## Roadmap
 
 Follows `edukors_ai_cli_plan.md`:
 
 - [x] Phase 2: shared core, fake provider, contract tests, stdio host.
-- [ ] Phase 1 (pending): compatibility matrix and account-isolation verification for Claude and Codex.
-- [ ] Phase 3: Claude and Codex adapters, live smoke tests with two accounts each.
+- [x] Phase 1 (offline part): compatibility matrix in `docs/compatibility.md`.
+- [x] Phase 3 (offline part): Claude and Codex adapters, tested against fakes and against the real CLIs signed out.
+- [ ] Phases 1 and 3 (live part): sign-in, turns and isolation with two real accounts per provider.
 - [ ] Phase 4: Graph integration (sidecar runtime packaging).
 - [ ] Phase 5: Slides integration.
 - [ ] Phase 6: remaining providers, Windows/Linux verification, release.
