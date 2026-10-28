@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -96,7 +97,7 @@ describe("claude: sessions", () => {
         pathToClaudeCodeExecutable: FAKE_CLAUDE,
         sessionId: session.resumeId,
       });
-      expect(options.cwd).toContain("sessions/graph/");
+      expect(options.cwd).toContain(join("sessions", "graph"));
       expect(options.env).toMatchObject({ CLAUDE_CONFIG_DIR: account.homeDir, CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" });
       expect(options.env).not.toHaveProperty("ANTHROPIC_API_KEY");
       expect(options.mcpServers).toEqual({});

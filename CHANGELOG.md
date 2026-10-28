@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Workspace: `openSession({ workspace: { dir, readDirs, protect, web, shell } })` lets the agent work in a folder with the provider's own file and web tools, and commands where a sandbox confines them; it never writes a protected path and reaches nothing else of the user's. New capabilities `workspace` and `workspaceShell`. Claude: everywhere, commands on macOS and Linux. Codex: macOS, inside the system sandbox. Host: `session.open` takes `workspace`.
+- Fake provider: `workspace`, `write` and `read` turns, and the `workspaceShell` option.
+
 ## 0.1.1
 
 - First version published to npm. The executables (`edukors-ai`, `edukors-ai-host`) are declared without a leading `./`, which npm would otherwise drop.

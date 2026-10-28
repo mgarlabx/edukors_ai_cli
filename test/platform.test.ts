@@ -1,5 +1,5 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { buildEnv, compareVersions, defaultDataDir, findExecutable, ManagedProcess, readLines, readVersion, redactText, redactValue, runCommand } from "../src/index.js";
@@ -28,7 +28,8 @@ describe("environment", () => {
     expect(defaultDataDir({ HOME: "/Users/u" }, "darwin")).toBe("/Users/u/Library/Application Support/EDUKORS");
     expect(defaultDataDir({ HOME: "/home/u" }, "linux")).toBe("/home/u/.local/share/edukors");
     expect(defaultDataDir({ HOME: "/home/u", XDG_DATA_HOME: "/data" }, "linux")).toBe("/data/edukors");
-    expect(defaultDataDir({ EDUKORS_AI_DATA_DIR: "/tmp/x" }, "darwin")).toBe("/tmp/x");
+    expect(defaultDataDir({ EDUKORS_AI_DATA_DIR: "/tmp/x" }, "darwin")).toBe(resolve("/tmp/x"));
+    expect(defaultDataDir({ LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" }, "win32")).toBe("C:\\Users\\u\\AppData\\Local\\EDUKORS");
   });
 });
 

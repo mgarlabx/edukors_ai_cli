@@ -6,15 +6,18 @@ import { createAiCli, type AiCli, type AiCliOptions, type AiEvent } from "../src
 import { createFakeProvider, type FakeProviderOptions } from "../src/testing/index.js";
 
 const cleanup: (() => Promise<void>)[] = [];
+const folders: string[] = [];
 
+// Providers first: on Windows a folder in use by a process cannot be removed.
 afterEach(async () => {
   while (cleanup.length) await cleanup.pop()!();
+  while (folders.length) await rm(folders.pop()!, { recursive: true, force: true, maxRetries: 10 });
 });
 
 /** A temporary data directory, with a space and non-ASCII characters in its path. */
 export async function tempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "edukors ai ção-"));
-  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  folders.push(dir);
   return dir;
 }
 

@@ -18,13 +18,17 @@
 //   garbage               prints a line that is not JSON first
 //   rate-limit            fails with a rate-limit error
 //   env                   reports which credential variables it inherited
+//   workspace             reports the session's workspace, if any
+//   write <path> <text>   writes a file in the workspace, as a provider's file tool
+//                         confined to it would (never a protected path)
+//   read <path>           reads a file in the workspace or one of its extra folders
 //   anything else         echoes the request
 //
 // Environment toggles: FAKE_AI_VERSION, FAKE_AI_LOGIN=fail|hang,
 // FAKE_AI_SERVE=silent (never becomes ready).
 import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { randomUUID } from "node:crypto";
 
 const VERSION = process.env.FAKE_AI_VERSION ?? "1.4.0";
@@ -212,6 +216,12 @@ async function serve() {
         await sleep(50);
       }
       reply = "done slowly";
+    } else if (/^workspace$/.test(text.trim())) {
+      const w = options.workspace;
+      reply = w ? `workspace ${w.dir} web=${w.web} shell=${w.shell} protected=${w.protectedPaths.length} readDirs=${w.readDirs.length}` : "no workspace";
+    } else if (/^(write|read) \S+/.test(text.trim())) {
+      const [, verb, target, content = ""] = /^(write|read) (\S+) ?([\s\S]*)$/.exec(text.trim());
+      reply = workspaceFile(options.workspace, verb, target, content);
     } else if (/\benv\b/.test(text)) {
       const seen = (name) => `${name}=${process.env[name] ? "present" : "absent"}`;
       reply = [seen("ANTHROPIC_API_KEY"), seen("OPENAI_API_KEY"), seen("CLAUDE_CONFIG_DIR"), `user=${auth.user}`].join(" ");
@@ -227,4 +237,26 @@ async function serve() {
     send({ type: "done" });
     current = null;
   }
+}
+
+/** A provider's file tools, confined to the workspace as the real ones are. */
+function workspaceFile(w, verb, target, content) {
+  if (!w) return `${verb} refused: no workspace`;
+  const path = isAbsolute(target) ? target : join(w.dir, target);
+  const within = (dir) => {
+    const rel = relative(dir, path);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  };
+  if (verb === "read") {
+    if (![w.dir, ...w.readDirs].some(within)) return `read refused: ${target} is outside the workspace`;
+    try {
+      return `read ${target}: ${readFileSync(path, "utf8")}`;
+    } catch {
+      return `read failed: ${target}`;
+    }
+  }
+  if (!within(w.dir)) return `write refused: ${target} is outside the workspace`;
+  if (w.protectedPaths.some((p) => path === p || !relative(p, path).startsWith(".."))) return `write refused: ${target} is protected`;
+  writeFileSync(path, content);
+  return `wrote ${target}`;
 }

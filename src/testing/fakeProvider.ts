@@ -36,6 +36,8 @@ export interface FakeProviderOptions {
   command?: { file: string; args: string[] };
   minVersion?: string;
   multiAccount?: boolean;
+  /** Whether a workspace may run commands, as on a platform with a sandbox. Default true. */
+  workspaceShell?: boolean;
   /** Extra variables for the fake CLI (FAKE_AI_VERSION, FAKE_AI_LOGIN, ...). */
   env?: Record<string, string>;
   startupTimeoutMs?: number;
@@ -101,6 +103,8 @@ export function createFakeProvider(options: FakeProviderOptions = {}): ProviderA
     tools: true,
     questions: true,
     liveOptions: true,
+    workspace: true,
+    workspaceShell: options.workspaceShell ?? true,
   };
 
   return {
@@ -174,7 +178,7 @@ class FakeSession implements ProviderSession {
 
   static async open(command: { file: string; args: string[] }, env: Record<string, string>, context: SessionContext, hooks: SessionHooks, startupTimeoutMs: number): Promise<FakeSession> {
     const args = [...command.args, "serve", ...(context.resumeId ? ["--resume", context.resumeId] : [])];
-    const proc = new ManagedProcess({ file: command.file, args, env, cwd: context.workDir });
+    const proc = new ManagedProcess({ file: command.file, args, env, cwd: context.workspace?.dir ?? context.workDir });
     const session = new FakeSession(proc, context.log, hooks);
 
     const ready = new Promise<string>((resolve, reject) => {
@@ -199,7 +203,14 @@ class FakeSession implements ProviderSession {
       throw e;
     }
     session.onStartup = null;
-    proc.writeLine({ type: "init", instructions: context.instructions, tools: context.tools, model: context.options.model, effort: context.options.effort });
+    proc.writeLine({
+      type: "init",
+      instructions: context.instructions,
+      tools: context.tools,
+      model: context.options.model,
+      effort: context.options.effort,
+      ...(context.workspace ? { workspace: context.workspace } : {}),
+    });
     return session;
   }
 

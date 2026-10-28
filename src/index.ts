@@ -32,7 +32,11 @@ export type {
   TurnInput,
   TurnOutcome,
   TurnSink,
+  Workspace,
 } from "./provider.js";
+export type { WorkspaceOptions } from "./workspace.js";
+export { seatbeltPolicy } from "./platform/sandbox.js";
+export type { SandboxPaths } from "./platform/sandbox.js";
 export { defineTool } from "./tools.js";
 export type { ToolCallContext, ToolDefinition, ToolResult, ToolSpec, ValidationResult } from "./tools.js";
 export { Diagnostics } from "./diagnostics.js";

@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, realpath, rm } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { arch, platform } from "node:os";
 import { AiCliError, toAiCliError } from "./errors.js";
@@ -13,6 +13,7 @@ import { AiSession, type Authorizer } from "./session.js";
 import { ExternalServers } from "./mcp/external.js";
 import { assertToolNames, toolSpec, type ToolDefinition } from "./tools.js";
 import { redactValue } from "./redact.js";
+import { resolveWorkspace, type WorkspaceOptions } from "./workspace.js";
 import { VERSION } from "./version.js";
 
 export interface AiCliOptions {
@@ -60,6 +61,12 @@ export interface OpenSessionOptions {
   authorize?: Authorizer;
   /** A folder of skills (`<name>/SKILL.md`) to offer; no other skill is enabled. */
   skillsDir?: string;
+  /**
+   * A folder the agent works in with the provider's own file and web tools,
+   * and commands where a sandbox confines them (capabilities `workspace` and
+   * `workspaceShell`). Without it, the agent has only the application's tools.
+   */
+  workspace?: WorkspaceOptions;
 }
 
 export interface DiagnosticReport {
@@ -292,6 +299,9 @@ export class AiCli {
     if (tools.length > 0 && !capabilities.tools) throw this.unsupported(adapter, "tools");
 
     if (input.skillsDir && !isAbsolute(input.skillsDir)) throw new AiCliError("INVALID_ARGUMENT", "skillsDir must be an absolute path");
+    if (input.workspace && !capabilities.workspace) throw this.unsupported(adapter, "workspace");
+    const libraryDir = join(this.paths.root, "ai");
+    const workspace = input.workspace ? await resolveWorkspace(input.workspace, capabilities, [await realpath(libraryDir).catch(() => libraryDir)]) : undefined;
     const sessionId = randomUUID();
     const log = this.diagnostics.scoped(`session:${sessionId.slice(0, 8)}`);
     const external = input.mcpServers && Object.keys(input.mcpServers).length ? await ExternalServers.connect(input.mcpServers, log) : null;
@@ -325,6 +335,7 @@ export class AiCli {
           tools: tools.map(toolSpec),
           externalServers: external?.servers.list() ?? [],
           ...(input.skillsDir ? { skillsDir: input.skillsDir } : {}),
+          ...(workspace ? { workspace } : {}),
           options: {},
         };
       },

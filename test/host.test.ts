@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createAiCli } from "../src/index.js";
 import { runStdioHost } from "../src/host/stdio.js";
 import { createFakeProvider } from "../src/testing/index.js";
+import { realpath } from "node:fs/promises";
 import { tempDir, until } from "./helpers.js";
 
 /** Plays the application's side of the pipe. */
@@ -106,6 +107,22 @@ describe("stdio host", () => {
       await until(() => h.events().some((e) => e.type === "textDelta" && e.requestId === "s"));
       await h.call("session.interrupt", { sessionId });
       expect((await pending).result).toEqual({ requestId: "s", status: "cancelled" });
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("opens a session in a workspace", async () => {
+    const h = await harness();
+    try {
+      const account = (await h.call("accounts.create", { providerId: "fake" })).result;
+      await h.call("accounts.connect", { accountId: account.id });
+      const dir = await realpath(await tempDir());
+      const { sessionId } = (await h.call("session.open", { accountId: account.id, documentId: "d", workspace: { dir, protect: ["slides"], web: false } })).result;
+      await h.call("session.send", { sessionId, text: "workspace", requestId: "w" });
+      const text = h.events().filter((e) => e.type === "textDelta" && e.requestId === "w").map((e) => e.text).join("");
+      expect(text).toBe(`workspace ${dir} web=false shell=true protected=1 readDirs=0`);
+      expect((await h.call("session.open", { accountId: account.id, documentId: "e", workspace: { dir: "relative" } })).error).toMatchObject({ code: "INVALID_ARGUMENT" });
     } finally {
       await h.close();
     }

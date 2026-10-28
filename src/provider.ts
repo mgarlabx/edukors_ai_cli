@@ -40,6 +40,10 @@ export interface Capabilities {
   questions: boolean;
   /** Model or effort can change in an open session. */
   liveOptions: boolean;
+  /** Sessions can work in a folder with the provider's own file and web tools (`OpenSessionOptions.workspace`). */
+  workspace: boolean;
+  /** In a workspace, commands can also run, confined to it. */
+  workspaceShell: boolean;
 }
 
 export type AccountState = "connected" | "disconnected" | "expired" | "unknown";
@@ -96,6 +100,24 @@ export interface ExternalServer {
   tools: ToolSpec[];
 }
 
+/**
+ * A folder the agent works in with the provider's own tools, confined to it:
+ * it reads there and in `readDirs`, writes only there, never in
+ * `protectedPaths`, and reaches nothing else of the user's.
+ */
+export interface Workspace {
+  /** Absolute, real path: the agent's working directory. */
+  dir: string;
+  /** Absolute, real paths the agent may read but not write. */
+  readDirs: string[];
+  /** Absolute paths inside `dir` the agent may read but not write: the application's own files. */
+  protectedPaths: string[];
+  /** Web search and fetch. */
+  web: boolean;
+  /** Commands, in the provider's or the system's sandbox; only where `workspaceShell` is true. */
+  shell: boolean;
+}
+
 export interface SessionContext extends AccountContext {
   appId: string;
   documentId: string;
@@ -107,6 +129,8 @@ export interface SessionContext extends AccountContext {
   externalServers: ExternalServer[];
   /** A folder of skills (`<name>/SKILL.md`) the application offers; no other skill is enabled. */
   skillsDir?: string;
+  /** Present only when the application asked for one and the provider has the capability. */
+  workspace?: Workspace;
   options: SessionOptions;
   /** The provider's own session identifier to resume, when the capability allows it. */
   resumeId?: string;
