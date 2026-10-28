@@ -58,7 +58,7 @@ The Agent SDK installs a bundled Claude Code as an optional dependency (`@anthro
 | Session | `codex app-server`, one process per session, `initialize` with `experimentalApi`, `account/read`, then `thread/start` (`sandbox: read-only`, `approvalPolicy: untrusted`, `baseInstructions`) or `thread/resume` | **Live** |
 | Tools | MCP over HTTP on 127.0.0.1, random port, per-session bearer token in `EDUKORS_MCP_TOKEN`; configured with `-c mcp_servers.edukors.*` so no config file is shared between documents | **Live** (also: refuses requests without the token, offline) |
 | Commands, file changes, extra permissions | Declined | **Live**: Codex asked to run `ls /`, was refused, and said so |
-| Skills | Codex's own and the user's (`~/.agents`) turned off in the account's config via `skills/config/write` | Offline. **Live: pending** |
+| Skills | Codex's own, downloaded plugins' and the user's (`~/.agents`) turned off in the account's config via `skills/config/write` | **Live** (written to the account's `config.toml` only) |
 | Questions | Codex 0.164 asks in an `agentMessage` with `delivery: "async"` and `questions: [{ title, options }]`, then runs a `sleep` item (12 h) until a user message arrives; the adapter puts each question to the user and answers with `turn/steer`. `item/tool/requestUserInput` (blocking, keyed by question id) is still handled | **Live** (async form). Before this was handled, such a turn waited indefinitely |
 | Interrupt | `turn/interrupt`; turn ends `interrupted` | **Live**: no output of the cancelled request reached the application afterwards |
 | Resume | `thread/resume`; the tool server is passed again at process start. A resumed thread replays an older turn's `thread/tokenUsage/updated`, so a request's turn is taken only from `turn/started` or the `turn/start` answer | **Live**: after `kill -9`, the next request resumed the thread with its history |
@@ -86,6 +86,10 @@ The experimental API also lets a client pass tools directly (`dynamicTools` on `
 ## Sign-in in the application
 
 `connectAccount(id, { onLogin })` calls `onLogin({ url, acceptsCode })` as soon as the provider prints its sign-in address; the stdio host sends it as `{ login: { requestId, accountId, url, acceptsCode } }`. An editor shows the address as a fallback ("If the browser did not open…"). With `acceptsCode`, it also shows a field whose value goes to `submitLoginCode(id, code)` (host: `accounts.submitCode`). The field should say which code it wants: the long code shown after **Authorize**, not the 6-digit code claude.ai may e-mail for its own sign-in.
+
+## Open issues
+
+- **Codex connectors and plugins.** Every Codex session also starts a `codex_apps` MCP server (the ChatGPT account's connectors), and Codex downloads curated plugins into the account's home. Their skills are switched off, but the connectors are still offered to the model. The plan keeps personal and remote capabilities out of the default editor session; find the supported switch (verify that an unknown `-c` key does not stop the app server) before release.
 
 ## Observed behavior worth knowing
 
