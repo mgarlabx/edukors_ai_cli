@@ -47,6 +47,7 @@ const Incoming = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), turnId: z.string(), delta: z.string() }),
   z.object({ type: z.literal("activity"), turnId: z.string(), phase: z.enum(["thinking", "reading", "researching", "applying"]) }),
   z.object({ type: z.literal("tool_call"), turnId: z.string(), callId: z.string(), name: z.string(), args: z.unknown() }),
+  z.object({ type: z.literal("mcp_call"), turnId: z.string(), callId: z.string(), server: z.string(), name: z.string(), args: z.unknown() }),
   z.object({ type: z.literal("question"), turnId: z.string(), questionId: z.string(), prompt: z.string(), options: z.array(z.string()).optional() }),
   z.object({ type: z.literal("usage"), turnId: z.string(), inputTokens: z.number(), outputTokens: z.number() }),
   z.object({ type: z.literal("done"), turnId: z.string() }),
@@ -274,6 +275,9 @@ class FakeSession implements ProviderSession {
         return sink.usage({ inputTokens: msg.inputTokens, outputTokens: msg.outputTokens });
       case "tool_call":
         void sink.callTool(msg.name, msg.args).then((result) => this.proc.writeLine({ type: "tool_result", callId: msg.callId, ...result }));
+        return;
+      case "mcp_call":
+        void sink.callExternal(msg.server, msg.name, msg.args).then((result) => this.proc.writeLine({ type: "tool_result", callId: msg.callId, ...result }));
         return;
       case "question":
         sink.ask({ prompt: msg.prompt, ...(msg.options ? { options: msg.options } : {}) }).then(

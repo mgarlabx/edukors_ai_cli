@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createAiCli, createClaudeProvider, createCodexProvider, type AiEvent, type AuthorizationRequest, type ProviderAdapter } from "../src/index.js";
 import { fakeClaudeSdk } from "./fakeClaudeSdk.js";
+import { createFakeProvider } from "../src/testing/index.js";
 import { tempDir, textOf } from "./helpers.js";
 
 const FAKE_CLAUDE = fileURLToPath(new URL("../fixtures/fake-claude.mjs", import.meta.url));
@@ -12,7 +13,7 @@ const FAKE_MCP = fileURLToPath(new URL("../fixtures/fake-mcp-server.mjs", import
 
 const glossary = { glossary: { command: process.execPath, args: [FAKE_MCP], env: { FAKE_MCP_SECRET: "s3" } } };
 
-const providers: { id: "claude" | "codex"; make: () => { adapter: ProviderAdapter; calls?: ReturnType<typeof fakeClaudeSdk>["calls"] } }[] = [
+const providers: { id: "claude" | "codex" | "fake"; make: () => { adapter: ProviderAdapter; calls?: ReturnType<typeof fakeClaudeSdk>["calls"] } }[] = [
   {
     id: "claude",
     make: () => {
@@ -21,9 +22,10 @@ const providers: { id: "claude" | "codex"; make: () => { adapter: ProviderAdapte
     },
   },
   { id: "codex", make: () => ({ adapter: createCodexProvider({ executable: FAKE_CODEX }) }) },
+  { id: "fake", make: () => ({ adapter: createFakeProvider() }) },
 ];
 
-async function setup(id: "claude" | "codex") {
+async function setup(id: "claude" | "codex" | "fake") {
   const made = providers.find((p) => p.id === id)!.make();
   const ai = createAiCli({ appId: "graph", dataDir: await tempDir(), interruptGraceMs: 400, providers: [made.adapter] });
   const events: AiEvent[] = [];
@@ -33,7 +35,7 @@ async function setup(id: "claude" | "codex") {
   return { ai, account, events, calls: made.calls, [Symbol.asyncDispose]: () => ai.dispose() };
 }
 
-describe.each(["claude", "codex"] as const)("%s: the user's MCP servers", (id) => {
+describe.each(["claude", "codex", "fake"] as const)("%s: the user's MCP servers", (id) => {
   it("offers a user's server through the core, authorized by the application", async () => {
     await using s = await setup(id);
     const asked: Omit<AuthorizationRequest, "signal">[] = [];

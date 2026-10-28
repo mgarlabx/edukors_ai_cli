@@ -9,6 +9,7 @@
 // What a turn does depends on words in the request's last paragraph (an
 // editor may put its own context before the person's words):
 //   tool <name> [<json>]  calls an application tool and reports the result
+//   mcp <server> <tool> [<json>]  calls a tool of one of the user's MCP servers
 //   ask                   asks the user a question and reports the answer
 //   slow                  streams for two seconds, stopping when interrupted
 //   ignore-interrupt      streams for two seconds and ignores interruptions
@@ -183,7 +184,15 @@ async function serve() {
 
     let reply;
     const tool = /\btool (\w+)(?: (\{.*\}))?/.exec(text);
-    if (tool) {
+    const mcp = /\bmcp ([\w-]+) (\w+)(?: (\{.*\}))?/.exec(text);
+    if (mcp) {
+      const callId = randomUUID();
+      send({ type: "activity", phase: "applying" });
+      send({ type: "mcp_call", callId, server: mcp[1], name: mcp[2], args: mcp[3] ? JSON.parse(mcp[3]) : {} });
+      const result = await wait(callId);
+      if (stopped() || !result) return cancelled();
+      reply = `${mcp[1]}.${mcp[2]} said: ${result.content}${result.isError ? " (error)" : ""}`;
+    } else if (tool) {
       const callId = randomUUID();
       send({ type: "activity", phase: "applying" });
       send({ type: "tool_call", callId, name: tool[1], args: tool[2] ? JSON.parse(tool[2]) : {} });
