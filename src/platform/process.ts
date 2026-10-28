@@ -22,7 +22,18 @@ const needsShell = (file: string) => WINDOWS && /\.(cmd|bat)$/i.test(file);
 /** Quotes an argument for cmd.exe. Arguments come from adapters, never from users. */
 const cmdQuote = (arg: string) => (/^[\w\-./:=@\\]+$/.test(arg) ? arg : `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/%/g, "%%")}"`);
 
+/**
+ * Windows runs a script only through its interpreter: a Node script (an npm
+ * install's `cli.js`, a test fixture) runs with the Node running this, which
+ * in Electron is the application itself, told to act as Node.
+ */
+const isNodeScript = (file: string) => WINDOWS && /\.[cm]?js$/i.test(file);
+
 function spawnRaw(spec: CommandSpec): ChildProcessWithoutNullStreams {
+  if (isNodeScript(spec.file)) {
+    const env = { ...(spec.env ?? process.env), ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) } as Record<string, string>;
+    return spawnRaw({ ...spec, file: process.execPath, args: [spec.file, ...(spec.args ?? [])], env });
+  }
   const args = spec.args ?? [];
   const shell = needsShell(spec.file);
   return spawn(shell ? `"${spec.file}"` : spec.file, shell ? args.map(cmdQuote) : args, {

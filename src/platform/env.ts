@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { posix, win32 } from "node:path";
 
 /**
  * Variables a provider process may inherit. Everything else, credentials
@@ -58,6 +58,8 @@ const inherited = (name: string) => INHERITED.has(name.toUpperCase()) || /^LC_[A
 /** Where user-level CLIs are commonly installed but GUI-launched apps often lack on PATH. */
 export function commonBinDirs(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): string[] {
   const home = env.HOME || env.USERPROFILE || homedir();
+  // The platform's own separators, whatever the platform this runs on.
+  const { join } = platform === "win32" ? win32 : posix;
   if (platform === "win32") {
     return [
       env.APPDATA ? join(env.APPDATA, "npm") : "",
@@ -96,7 +98,7 @@ export function buildEnv(options: BuildEnvOptions = {}): Record<string, string> 
   for (const [name, value] of Object.entries(base)) if (value !== undefined && inherited(name)) env[name] = value;
 
   const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
-  const sep = platform === "win32" ? ";" : delimiter;
+  const sep = platform === "win32" ? ";" : ":";
   const entries = (env[pathKey] ?? "").split(sep).filter(Boolean);
   for (const dir of [...(options.extraPath ?? []), ...commonBinDirs(platform, base)]) if (!entries.includes(dir)) entries.push(dir);
   env[pathKey] = entries.join(sep);

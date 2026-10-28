@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { join, posix, resolve, win32 } from "node:path";
 
 /**
  * The per-OS-user EDUKORS data directory, shared by every EDUKORS application
@@ -11,10 +11,12 @@ export function defaultDataDir(env: NodeJS.ProcessEnv = process.env, platform: N
   const override = env.EDUKORS_AI_DATA_DIR;
   if (override) return resolve(override);
   const home = env.HOME || env.USERPROFILE || homedir();
-  if (platform === "darwin") return join(home, "Library", "Application Support", "EDUKORS");
+  // The platform's own separators, whatever the platform this runs on.
+  const p = platform === "win32" ? win32 : posix;
+  if (platform === "darwin") return p.join(home, "Library", "Application Support", "EDUKORS");
   // Local, not roaming: account directories hold machine-bound provider state.
-  if (platform === "win32") return join(env.LOCALAPPDATA || join(home, "AppData", "Local"), "EDUKORS");
-  return join(env.XDG_DATA_HOME && isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : join(home, ".local", "share"), "edukors");
+  if (platform === "win32") return p.join(env.LOCALAPPDATA || p.join(home, "AppData", "Local"), "EDUKORS");
+  return p.join(env.XDG_DATA_HOME && p.isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : p.join(home, ".local", "share"), "edukors");
 }
 
 /** Stable, filesystem-safe key for an arbitrary document identifier. */
