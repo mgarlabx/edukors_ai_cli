@@ -17,10 +17,26 @@ export interface Usage {
   outputTokens?: number;
   cachedInputTokens?: number;
   costUsd?: number;
-  /** Account-level limit, as a fraction from 0 to 1, when the provider exposes it. */
+  /** Account-level limit: the most used window, as a fraction from 0 to 1, when the provider exposes it. */
   limitUsed?: number;
   limitResetsAt?: string;
+  /** Every limit window the provider reported (e.g. `five_hour`, `seven_day`). */
+  windows?: LimitWindow[];
   observedAt: string;
+}
+
+export interface LimitWindow {
+  /** `five_hour`, `seven_day`, or the provider's own name for another window. */
+  name: string;
+  used: number;
+  resetsAt?: string;
+}
+
+/** The account-level fields of a usage report, from its windows: the most used one leads. */
+export function fromWindows(windows: LimitWindow[]): Pick<Usage, "limitUsed" | "limitResetsAt" | "windows"> {
+  if (!windows.length) return {};
+  const top = windows.reduce((a, b) => (b.used > a.used ? b : a));
+  return { limitUsed: top.used, ...(top.resetsAt ? { limitResetsAt: top.resetsAt } : {}), windows };
 }
 
 /** Identifies what an event belongs to. `requestId` is absent for session-level events. */

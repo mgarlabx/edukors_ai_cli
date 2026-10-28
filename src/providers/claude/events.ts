@@ -1,6 +1,6 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { AiCliError } from "../../errors.js";
-import type { ActivityPhase, Usage } from "../../events.js";
+import { fromWindows, type ActivityPhase, type LimitWindow, type Usage } from "../../events.js";
 
 /**
  * Claude Code's messages, as what a turn needs. This file has no SDK runtime
@@ -38,6 +38,8 @@ export function claudeError(name: string, detail?: string): AiCliError {
 
 const WEB_TOOLS = new Set(["WebSearch", "WebFetch"]);
 
+const when = (seconds: number) => new Date(seconds * (seconds < 1e12 ? 1000 : 1)).toISOString();
+
 /** A share from 0 to 1, whichever scale the provider used. */
 const share = (value: number) => (value > 1 ? value / 100 : value);
 
@@ -68,17 +70,17 @@ export function interpret(msg: SDKMessage): ClaudeAction[] {
       return msg.error ? [{ kind: "error", error: claudeError("authentication_failed", msg.error) }] : [];
 
     case "rate_limit_event": {
-      const info = msg.rate_limit_info;
-      if (typeof info.utilization !== "number") return [];
-      return [
-        {
-          kind: "usage",
-          usage: {
-            limitUsed: share(info.utilization),
-            ...(typeof info.resetsAt === "number" ? { limitResetsAt: new Date(info.resetsAt * (info.resetsAt < 1e12 ? 1000 : 1)).toISOString() } : {}),
-          },
-        },
-      ];
+      // `unifiedWindows` holds every window; the top-level fields describe only `rateLimitType`.
+      const info = msg.rate_limit_info as typeof msg.rate_limit_info & { unifiedWindows?: Record<string, { utilization?: number; resetsAt?: number }> };
+      const entries: [string, { utilization?: number; resetsAt?: number }][] = info.unifiedWindows
+        ? Object.entries(info.unifiedWindows)
+        : [[info.rateLimitType ?? "limit", { ...(info.utilization !== undefined ? { utilization: info.utilization } : {}), ...(info.resetsAt !== undefined ? { resetsAt: info.resetsAt } : {}) }]];
+      const windows: LimitWindow[] = [];
+      for (const [name, w] of entries) {
+        if (typeof w?.utilization !== "number") continue;
+        windows.push({ name, used: share(w.utilization), ...(typeof w.resetsAt === "number" ? { resetsAt: when(w.resetsAt) } : {}) });
+      }
+      return windows.length ? [{ kind: "usage", usage: fromWindows(windows) }] : [];
     }
 
     case "result": {

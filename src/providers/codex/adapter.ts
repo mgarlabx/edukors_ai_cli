@@ -1,5 +1,5 @@
 import { AiCliError, toAiCliError } from "../../errors.js";
-import type { Usage } from "../../events.js";
+import { fromWindows, type LimitWindow, type Usage } from "../../events.js";
 import type { ScopedLog } from "../../diagnostics.js";
 import { startToolBridge, TOOL_SERVER_NAME, type ToolBridge } from "../../mcp/toolServer.js";
 import { compareVersions, findExecutable, readVersion } from "../../platform/discovery.js";
@@ -49,17 +49,20 @@ export interface CodexProviderOptions {
 const MIN_VERSION = "0.164.0";
 const TOKEN_VAR = "EDUKORS_MCP_TOKEN";
 
-/** The share of the most used window of each limit, from 0 to 1, and when it resets. */
+const WINDOW_NAMES: Record<number, string> = { 300: "five_hour", 10080: "seven_day" };
+
+/** Every window of every limit, from 0 to 1; the most used one leads. */
 export function codexLimits(read: any): Omit<Usage, "observedAt"> | null {
   const snapshots: any[] = read?.rateLimitsByLimitId && typeof read.rateLimitsByLimitId === "object" ? Object.values(read.rateLimitsByLimitId) : read?.rateLimits ? [read.rateLimits] : [];
-  let worst: { used: number; resetsAt?: number } | null = null;
+  const windows: LimitWindow[] = [];
   for (const snap of snapshots)
-    for (const w of [snap?.primary, snap?.secondary]) {
+    for (const [slot, w] of [["primary", snap?.primary], ["secondary", snap?.secondary]] as const) {
       if (!w || typeof w.usedPercent !== "number") continue;
-      if (!worst || w.usedPercent > worst.used) worst = { used: w.usedPercent, ...(typeof w.resetsAt === "number" ? { resetsAt: w.resetsAt } : {}) };
+      const span = WINDOW_NAMES[w.windowDurationMins] ?? (w.windowDurationMins ? `${w.windowDurationMins}min` : slot);
+      const name = snapshots.length > 1 && snap?.limitId ? `${snap.limitId}:${span}` : span;
+      windows.push({ name, used: Math.max(0, Math.min(1, w.usedPercent / 100)), ...(typeof w.resetsAt === "number" ? { resetsAt: new Date(w.resetsAt * 1000).toISOString() } : {}) });
     }
-  if (!worst) return null;
-  return { limitUsed: Math.max(0, Math.min(1, worst.used / 100)), ...(worst.resetsAt ? { limitResetsAt: new Date(worst.resetsAt * 1000).toISOString() } : {}) };
+  return windows.length ? fromWindows(windows) : null;
 }
 
 /** Codex's turn errors, as stable codes. */

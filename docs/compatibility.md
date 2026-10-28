@@ -6,7 +6,7 @@ Status of each provider adapter: what it relies on, and how far each part has be
 
 - **Offline**: covered by the automated suite against a fake CLI that reproduces the protocol (`fixtures/`, `test/fakeClaudeSdk.ts`).
 - **Real CLI, signed out**: run against the real CLI on macOS with a new, empty account directory. No sign-in, no prompt, no tokens spent.
-- **Live**: run against the real CLI with a signed-in account. *Not done yet; this is step 4 of the plan, and it needs the maintainer's accounts.*
+- **Live**: run against the real CLI with signed-in accounts. Claude: done on 2026-10-28 (macOS arm64, Claude Code 2.1.312, two different accounts: a personal organization and a Team organization). Codex: pending.
 
 ## Versions
 
@@ -26,21 +26,21 @@ The Agent SDK installs a bundled Claude Code as an optional dependency (`@anthro
 | Area | Mechanism | Verified |
 | --- | --- | --- |
 | Discovery | `claude` on PATH, common install dirs, `~/.claude/local`, login shell; `EDUKORS_CLAUDE` or the `executable` option overrides; Windows `.cmd` shim resolved to `claude.exe`/`cli.js` | Offline; real CLI (macOS) |
-| Account isolation | `CLAUDE_CONFIG_DIR` = the account's managed directory. On macOS, Claude Code keys its Keychain entry by that directory (`Claude Code-credentials-<sha256(dir)[0:8]>`, as found in the Slides editor) | Offline. **Live: pending** (two accounts at once, and the user's own `~/.claude` unaffected) |
+| Account isolation | `CLAUDE_CONFIG_DIR` = the account's managed directory. On macOS, Claude Code keys its Keychain entry by that directory (`Claude Code-credentials-<sha256(dir)[0:8]>`, as found in the Slides editor) | **Live**: two accounts with different identities ran at the same time on the same document id, each process reporting its own account; signing one out left the other connected; the user's own `~/.claude` sign-in stayed unchanged throughout, including when one test account used the same identity |
 | Inherited credentials | Allowlisted environment; `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CONFIG_DIR` etc. never inherited | Offline |
-| Sign-in | `claude auth login --claudeai` (browser), up to 10 min, cancellable | Offline. **Live: pending**, including whether it works without a terminal (the Graph opened a terminal instead) |
-| Status (no model call) | `claude auth status --json`: exits 1 when signed out, still printing JSON (`loggedIn`) | Real CLI, signed out. **Signed-in shape: pending** (identity field) |
-| Sign-out | `claude auth logout` | Offline |
+| Sign-in | `claude auth login --claudeai` (browser), up to 10 min, cancellable | **Live**: works without a terminal; the browser opens and the command returns when the sign-in completes. The browser reuses a signed-in claude.ai session, so choosing another identity means signing out there first. **Gap:** when the browser does not open, Claude Code prints a URL whose flow ends in a code to paste into the terminal; the adapter has no stdin channel for it yet (see below) |
+| Status (no model call) | `claude auth status --json`: exits 1 when signed out, still printing JSON (`loggedIn`); signed in, `email`, `orgName`, `subscriptionType` | **Live** |
+| Sign-out | `claude auth logout` | **Live** (the other account stayed connected) |
 | Models | `initializationResult().models` from a query with no prompt | Real CLI, signed out (`default, opus, fable, sonnet, haiku`) |
-| Session | Agent SDK `query()` in streaming-input mode, `cwd` = per-document work dir, `settingSources: []`, `strictMcpConfig`, `persistSession`, `includePartialMessages` | Real CLI, signed out (starts and reports the account). **Live turn: pending** |
-| Sign-in check at open | `initializationResult().account` (email, subscription, token source) | Real CLI, signed out |
-| Tools | In-process MCP server (`mcpServers` of type `sdk`) built from the application's JSON Schemas; every call allowed by `canUseTool` and validated by the core | Offline. **Live: pending** |
+| Session | Agent SDK `query()` in streaming-input mode, `cwd` = per-document work dir, `settingSources: []`, `strictMcpConfig`, `persistSession`, `includePartialMessages` | **Live** (a short turn takes 2–3 s including startup) |
+| Sign-in check at open | `initializationResult().account` (email, subscription, token source) | **Live**, signed in and signed out |
+| Tools | In-process MCP server (`mcpServers` of type `sdk`) built from the application's JSON Schemas; every call allowed by `canUseTool` and validated by the core. No blanket `allowedTools` entry: the SDK warns that one would bypass `canUseTool` | **Live** |
 | Built-in tools | Only `AskUserQuestion` (configurable). Everything else is denied in `canUseTool`. No shell, files, web, skills, personal MCP servers | Offline |
-| Questions | `AskUserQuestion` through `canUseTool`, answers returned as `updatedInput.answers` keyed by question text | Offline. **Live: pending** (answer format) |
-| Interrupt | `Query.interrupt()`; the turn ends with `terminal_reason: aborted_*` | Offline |
-| Resume | `resume: <session id>` after a crash or a later reopen | Offline |
-| Usage | Per turn: tokens and cost from `result`; account limit from `rate_limit_event.utilization` (scale normalized to 0–1) | Offline. **Live: pending** (utilization scale). `readUsage` is reported unsupported: no structured, model-free source |
-| Model / effort change | `setModel`, `applyFlagSettings({ effortLevel })` | Offline |
+| Questions | `AskUserQuestion` through `canUseTool`, answers returned as `updatedInput.answers` keyed by question text | **Live** (Claude used the answer) |
+| Interrupt | `Query.interrupt()`; the turn ends with `terminal_reason: aborted_*` | **Live**: stopped mid-stream, no event of the cancelled request reached the application afterwards, the next request worked |
+| Resume | `resume: <session id>` after a crash or a later reopen | **Live**: after `kill -9` of Claude Code, the error was reported at once and the next request resumed the same conversation with its history |
+| Usage | Per turn: tokens and cost from `result`; account limits from `rate_limit_event.rate_limit_info.unifiedWindows` (`five_hour`, `seven_day`; utilization already 0–1), the most used leading as `limitUsed` | **Live**. The top-level `utilization` covers only `rateLimitType` and is sometimes absent, which is why the windows are read instead. `readUsage` is reported unsupported: no structured, model-free source |
+| Model / effort change | `setModel`, `applyFlagSettings({ effortLevel })` | **Live** (model); effort offline |
 | Errors | `authentication_failed` → `ACCOUNT_EXPIRED`, `rate_limit` → `RATE_LIMITED`, `overloaded`/`server_error` → retryable `PROVIDER_ERROR` | Offline |
 
 ## Codex
@@ -83,13 +83,17 @@ The experimental API also lets a client pass tools directly (`dynamicTools` on `
 | macOS (Apple Silicon) | Offline suite; real CLIs signed out |
 | macOS (Intel), Windows, Linux | Not run. Windows-specific code (PATHEXT, `.cmd` shims, `taskkill`, case-insensitive environment) exists but is untested |
 
-## Live checks for step 4
+## Open issues
 
-For each of Claude and Codex, with two accounts (A, B):
+- **Claude sign-in without a browser.** When the browser does not open, `claude auth login` prints an authorization URL whose flow ends in a code to paste into the terminal (`Paste code here if prompted >`). The adapter starts the command without a terminal, so that path cannot finish. The fix is a sign-in flow that hands the URL to the application and accepts the pasted code; it needs an extension of `connectAccount`.
+
+## Live checks
+
+Claude: done (2026-10-28). Codex: pending. For each provider, with two accounts (A, B) of different identities:
 
 1. Sign in A and B through `edukors-ai connect`; confirm each opens the browser and finishes without a terminal.
 2. Confirm `status` shows each account's own identity, and that the user's personal CLI sign-in is unchanged.
 3. Open one session per account at the same time and confirm each answers as its own account.
 4. Run a tool call, a question, an interruption, and a resume after killing the provider process.
-5. Read usage (Codex) and observe `rate_limit_event` values (Claude) to fix the scale.
+5. Read usage limits and check their scale and windows.
 6. Sign A out; confirm B is unaffected.

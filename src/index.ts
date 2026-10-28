@@ -4,6 +4,8 @@ export { AiSession } from "./session.js";
 export type { SendOptions, SessionState, TurnResult } from "./session.js";
 export { AiCliError, ERROR_CODES, isAiCliError, toAiCliError } from "./errors.js";
 export type { ErrorCode, ErrorMeta, SerializedError } from "./errors.js";
+export { fromWindows } from "./events.js";
+export type { LimitWindow } from "./events.js";
 export type { ActivityPhase, AiEvent, AiEventBody, AiEventListener, AiEventType, EventScope, SessionCloseReason, Usage } from "./events.js";
 export type {
   AccountContext,

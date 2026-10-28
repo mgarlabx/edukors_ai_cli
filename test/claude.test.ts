@@ -81,7 +81,7 @@ describe("claude: sessions", () => {
       expect(textOf(s.events, "r")).toBe("Echo: hello [history 0, model default]");
       const usage = s.events.filter((e) => e.type === "usageUpdated").map((e) => (e as { usage: object }).usage);
       expect(usage).toEqual([
-        expect.objectContaining({ limitUsed: 0.42, limitResetsAt: "2033-05-18T03:33:20.000Z" }),
+        expect.objectContaining({ limitUsed: 0.42, limitResetsAt: "2033-05-18T03:33:20.000Z", windows: [{ name: "five_hour", used: 0.42, resetsAt: "2033-05-18T03:33:20.000Z" }] }),
         expect.objectContaining({ inputTokens: 10, outputTokens: 20, cachedInputTokens: 3, costUsd: 0.01 }),
       ]);
 
@@ -176,6 +176,24 @@ describe("claude: message interpretation", () => {
     const failed = interpret({ type: "result", subtype: "error_max_turns", is_error: true, errors: ["too many turns"], usage: { input_tokens: 1, output_tokens: 2 }, total_cost_usd: 0 } as never);
     expect(failed.at(-1)).toMatchObject({ kind: "fail", error: { code: "PROVIDER_ERROR", meta: { providerCode: "error_max_turns" } } });
     expect(interpret({ type: "assistant", parent_tool_use_id: null, error: "authentication_failed" } as never)).toMatchObject([{ kind: "error", error: { code: "ACCOUNT_EXPIRED" } }]);
-    expect(interpret({ type: "rate_limit_event", rate_limit_info: { status: "allowed", utilization: 87 } } as never)).toEqual([{ kind: "usage", usage: { limitUsed: 0.87 } }]);
+    expect(interpret({ type: "rate_limit_event", rate_limit_info: { status: "allowed", utilization: 87 } } as never)).toEqual([{ kind: "usage", usage: { limitUsed: 0.87, windows: [{ name: "limit", used: 0.87 }] } }]);
+  });
+
+  it("reads every window of a real rate-limit event, including one without top-level utilization", () => {
+    // Captured from Claude Code 2.1.312 during the live checks (docs/compatibility.md).
+    const real = { status: "allowed", resetsAt: 1793202600, rateLimitType: "five_hour", overageStatus: "rejected", isUsingOverage: false, unifiedWindows: { five_hour: { utilization: 0.35, resetsAt: 1793202600, status: "allowed" }, seven_day: { utilization: 0.68, resetsAt: 1793268000, status: "allowed" } } };
+    expect(interpret({ type: "rate_limit_event", rate_limit_info: real } as never)).toEqual([
+      {
+        kind: "usage",
+        usage: {
+          limitUsed: 0.68,
+          limitResetsAt: "2026-10-29T10:00:00.000Z",
+          windows: [
+            { name: "five_hour", used: 0.35, resetsAt: "2026-10-28T15:50:00.000Z" },
+            { name: "seven_day", used: 0.68, resetsAt: "2026-10-29T10:00:00.000Z" },
+          ],
+        },
+      },
+    ]);
   });
 });

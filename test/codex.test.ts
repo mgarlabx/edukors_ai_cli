@@ -54,7 +54,12 @@ describe("codex: installation and accounts", () => {
     await using s = await setup();
     const account = await s.connected();
     expect(await s.ai.listModels(account.id)).toEqual([{ id: "gpt-fake", label: "GPT Fake", efforts: ["low", "high"], default: true }]);
-    expect(await s.ai.readUsage(account.id)).toMatchObject({ limitUsed: 0.42, limitResetsAt: "2033-05-18T03:33:20.000Z", observedAt: expect.any(String) });
+    expect(await s.ai.readUsage(account.id)).toMatchObject({
+      limitUsed: 0.42,
+      limitResetsAt: "2033-05-18T03:33:20.000Z",
+      windows: [{ name: "five_hour", used: 0.42 }, { name: "seven_day", used: 0.1 }],
+      observedAt: expect.any(String),
+    });
   });
 
   it("refuses to open a session on a signed-out account", async () => {
@@ -157,7 +162,14 @@ describe("codex: sessions", () => {
 
 describe("codex: protocol mapping", () => {
   it("takes the most used window as the account's limit", () => {
-    expect(codexLimits({ rateLimitsByLimitId: { a: { primary: { usedPercent: 20 } }, b: { secondary: { usedPercent: 75, resetsAt: 1 } } } })).toEqual({ limitUsed: 0.75, limitResetsAt: "1970-01-01T00:00:01.000Z" });
+    expect(codexLimits({ rateLimitsByLimitId: { a: { limitId: "a", primary: { usedPercent: 20, windowDurationMins: 300 } }, b: { limitId: "b", secondary: { usedPercent: 75, resetsAt: 1, windowDurationMins: 10080 } } } })).toEqual({
+      limitUsed: 0.75,
+      limitResetsAt: "1970-01-01T00:00:01.000Z",
+      windows: [
+        { name: "a:five_hour", used: 0.2 },
+        { name: "b:seven_day", used: 0.75, resetsAt: "1970-01-01T00:00:01.000Z" },
+      ],
+    });
     expect(codexLimits({})).toBeNull();
     expect(codexError({ codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 502 } } })).toMatchObject({ code: "PROVIDER_ERROR", retryable: true });
     expect(codexError({ codexErrorInfo: "unauthorized" })).toMatchObject({ code: "ACCOUNT_EXPIRED" });
