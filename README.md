@@ -8,7 +8,15 @@
 
 The library handles CLI discovery, accounts, provider processes, sessions, interruption, tool routing, normalized events and redacted diagnostics. Each editor keeps its own document state, tools, validation, undo and UI.
 
-> **Status: 0.1.0.** Shared core, Claude and Codex adapters, stdio host and a deterministic fake provider are implemented and tested offline. The Claude and Codex adapters have been run against the real CLIs only with signed-out accounts; sign-in, turns and account isolation still need live verification. See [docs/compatibility.md](docs/compatibility.md) and [Roadmap](#roadmap).
+> **Status: 0.1.0.** Shared core, Claude and Codex adapters, skills and the user's MCP servers, the stdio host and a deterministic fake provider. Both adapters are verified live (sign-in, isolation of two accounts, tools, questions, interruption, crash recovery); the Graph editor runs on the library. See [docs/compatibility.md](docs/compatibility.md) and [Roadmap](#roadmap).
+
+## Installing
+
+```sh
+npm install github:mgarlabx/edukors_ai_cli#v0.1.0
+```
+
+npm builds the package on install (`prepare`). Applications pin a tag and commit their lockfile.
 
 ## Requirements
 
@@ -145,8 +153,8 @@ Follows `edukors_ai_cli_plan.md`:
 - [x] Phase 2: shared core, fake provider, contract tests, stdio host.
 - [x] Phase 1 (offline part): compatibility matrix in `docs/compatibility.md`.
 - [x] Phase 3 (offline part): Claude and Codex adapters, tested against fakes and against the real CLIs signed out.
-- [ ] Phases 1 and 3 (live part): sign-in, turns and isolation with two real accounts per provider.
-- [ ] Phase 4: Graph integration (sidecar runtime packaging).
+- [x] Phases 1 and 3 (live part): sign-in, turns and isolation with two real accounts per provider.
+- [x] Phase 4: Graph integration (on the Graph editor's `ai-cli-integration` branch).
 - [ ] Phase 5: Slides integration.
 - [ ] Phase 6: remaining providers, Windows/Linux verification, release.
 
