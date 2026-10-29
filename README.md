@@ -86,7 +86,7 @@ const session = await ai.openSession({
 });
 ```
 
-Every editor's AI settings screen has the same layout (see section 6 of `edukors_ai_cli_plan.md`): **Accounts** at the top, and under **Advanced** always *Instructions for the agent*, *MCP servers* and *Skills*. `parseMcpConfig(text)` validates the MCP JSON (`{ "mcpServers": { ... } }` or the bare object, `timeout` in milliseconds) and returns every problem as a stable code; `listSkills(dir)` lists the skills folder for display.
+Every editor's AI settings screen has the same layout (see [docs/roadmap.md](docs/roadmap.md#settings-screen)): **Accounts** at the top, and under **Advanced** always *Instructions for the agent*, *MCP servers* and *Skills*. `parseMcpConfig(text)` validates the MCP JSON (`{ "mcpServers": { ... } }` or the bare object, `timeout` in milliseconds) and returns every problem as a stable code; `listSkills(dir)` lists the skills folder for display.
 
 The library connects to the user's servers itself and offers their tools to either provider. A provider is never handed a server directly: every call goes through `authorize`, and is reported as `toolStarted`/`toolCompleted` (`mcp__<server>__<tool>`). Without `authorize`, such calls are denied. Server status is reported once as `mcpServerStatus` events.
 
@@ -174,15 +174,7 @@ Implement `ProviderAdapter` (see `src/provider.ts`). `src/testing/fakeProvider.t
 
 ## Roadmap
 
-Follows `edukors_ai_cli_plan.md`:
-
-- [x] Phase 2: shared core, fake provider, contract tests, stdio host.
-- [x] Phase 1 (offline part): compatibility matrix in `docs/compatibility.md`.
-- [x] Phase 3 (offline part): Claude and Codex adapters, tested against fakes and against the real CLIs signed out.
-- [x] Phases 1 and 3 (live part): sign-in, turns and isolation with two real accounts per provider.
-- [x] Phase 4: Graph integration (on the Graph editor's `ai-cli-integration` branch).
-- [ ] Phase 5: Slides integration.
-- [ ] Phase 6: remaining providers, Windows/Linux verification, release.
+Done: the shared core with the fake provider and the stdio host; the Claude and Codex adapters, checked live with two accounts each; the workspace mode; the Graph editor and the Slides editor running on this library. What is left (the remaining providers, Codex connectors, a bundled Node.js for the Graph editor, live checks on Windows and Linux), the design rules both editors follow and what is out of scope are in [docs/roadmap.md](docs/roadmap.md).
 
 ## License
 
