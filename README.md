@@ -1,6 +1,46 @@
-# edukors_ai_cli
+<h1 align="center">Edukors AI CLI</h1>
 
-`@edukors/ai-cli` connects EDUKORS editors (Slides and Graph) to the AI provider CLIs installed on a user's computer. It gives both editors the same account and session behavior:
+<p align="center">
+  The shared library that connects the Edukors editors to the AI provider CLIs<br>
+  installed on the user's computer (<strong>Claude Code</strong> and <strong>Codex</strong>).<br>
+  Part of the <a href="https://edukors.org"><strong>Edukors.org</strong></a> project.
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@edukors/ai-cli"><img src="https://img.shields.io/npm/v/@edukors/ai-cli?style=for-the-badge&logo=npm&logoColor=white&label=npm&color=CB3837" alt="npm package"></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/node-%E2%89%A5%2022.12-339933?logo=node.js&logoColor=white" alt="Node.js 22.12 or later">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <sub>Published on npm as <code>@edukors/ai-cli</code>. Tested on macOS; Linux and Windows code paths exist but have not been verified yet.</sub>
+</p>
+
+## Part of Edukors.org
+
+[Edukors.org](https://edukors.org) is a free, nonprofit effort that helps educators anywhere in the world learn to work with artificial intelligence. Its editors let teachers build course material with an AI agent alongside, and this library is the piece they share for that agent:
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🗺️ Graph Editor</h3>
+      <a href="https://github.com/mgarlabx/edukors_graph_editor">edukors_graph_editor</a>: adaptive courses in the <a href="https://github.com/mgarlabx/edukors_graph">Edukors Graph</a> format.
+    </td>
+    <td width="33%" valign="top">
+      <h3>🖼️ Slides Editor</h3>
+      <a href="https://github.com/mgarlabx/edukors_slides_editor">edukors_slides_editor</a>: presentations, kept as folders of files.
+    </td>
+    <td width="33%" valign="top">
+      <h3>🤖 AI CLI</h3>
+      <strong>This library</strong>, which gives both editors the same AI accounts, sessions and agent behavior.
+    </td>
+  </tr>
+</table>
+
+With it, every editor offers the same three steps:
 
 1. Choose a provider.
 2. Connect an account.
@@ -8,7 +48,38 @@
 
 The library handles CLI discovery, accounts, provider processes, sessions, interruption, tool routing, normalized events and redacted diagnostics. Each editor keeps its own document state, tools, validation, undo and UI.
 
-> **Status: 0.1.0.** Shared core, Claude and Codex adapters, skills and the user's MCP servers, the stdio host and a deterministic fake provider. Both adapters are verified live (sign-in, isolation of two accounts, tools, questions, interruption, crash recovery); the Graph editor runs on the library. See [docs/compatibility.md](docs/compatibility.md) and [Roadmap](#roadmap).
+## What it provides
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🔌 Providers</h3>
+      Finds the user's own <code>claude</code> and <code>codex</code> CLIs and drives them; it never downloads them.
+    </td>
+    <td width="33%" valign="top">
+      <h3>👤 Accounts</h3>
+      Several accounts per provider, each with its own sign-in, shared by every Edukors app on the computer.
+    </td>
+    <td width="33%" valign="top">
+      <h3>💬 Sessions</h3>
+      Conversations per document, with interruption, crash recovery and resume.
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🛠️ Tools</h3>
+      The editor's own tools, validated with zod, so the document changes only through the editor.
+    </td>
+    <td width="33%" valign="top">
+      <h3>🧩 Skills and MCP</h3>
+      The user's skills and MCP servers, with every MCP call going through the editor's approval.
+    </td>
+    <td width="33%" valign="top">
+      <h3>📁 Workspace</h3>
+      An agent that works inside a document's folder, confined to it.
+    </td>
+  </tr>
+</table>
 
 ## Installing
 
@@ -172,10 +243,14 @@ Implement `ProviderAdapter` (see `src/provider.ts`). `src/testing/fakeProvider.t
 | `src/skills.ts` | Skill folders: listing, confined reading, `read_skill` |
 | `src/testing/`, `fixtures/` | Fake provider adapter and fake CLIs (`fake-ai`, `fake-claude`, `fake-codex`) |
 
-## Roadmap
+## Project status
 
-Done: the shared core with the fake provider and the stdio host; the Claude and Codex adapters, checked live with two accounts each; the workspace mode; the Graph editor and the Slides editor running on this library. What is left (the remaining providers, Codex connectors, a bundled Node.js for the Graph editor, live checks on Windows and Linux), the design rules both editors follow and what is out of scope are in [docs/roadmap.md](docs/roadmap.md).
+Version 0.2.0: the shared core, the Claude and Codex adapters, skills and the user's MCP servers, the workspace mode, the stdio host and a deterministic fake provider. Both adapters are verified live (sign-in, isolation of two accounts, tools, questions, interruption, crash recovery), and the Graph editor and the Slides editor run on the library. See [docs/compatibility.md](docs/compatibility.md).
+
+What is left (the remaining providers, Codex connectors, a bundled Node.js for the Graph editor, live checks on Windows and Linux), the design rules both editors follow and what is out of scope are in [docs/roadmap.md](docs/roadmap.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
+[MIT](LICENSE). Copyright (c) 2026 Edukors.org - Maurício Garcia and contributors.
+
+Contributions: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
