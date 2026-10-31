@@ -61,3 +61,10 @@ Progress uses common states (preparing, thinking, reading, researching, applying
 - Guaranteeing identical capabilities or model behavior across providers.
 - Preserving every legacy technical session format.
 - Installing or updating provider CLIs automatically.
+
+## Shared assistant UI
+
+The editors share the versioned React package in `packages/ui`, with host callbacks
+for Electron and Tauri. The runtime stays independent of React and desktop hosts.
+See [assistant-interface.md](assistant-interface.md) for contracts, local artifacts,
+migration, validation and platform limits. Provider CLI installation remains manual.

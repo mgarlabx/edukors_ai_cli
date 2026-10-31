@@ -84,7 +84,7 @@ The library handles CLI discovery, accounts, provider processes, sessions, inter
 ## Installing
 
 ```sh
-npm install @edukors/ai-cli@0.2.0
+npm install @edukors/ai-cli@0.2.2
 ```
 
 Applications pin an exact version and commit their lockfile; a release of the library changes no installed application.
@@ -245,7 +245,7 @@ Implement `ProviderAdapter` (see `src/provider.ts`). `src/testing/fakeProvider.t
 
 ## Project status
 
-Version 0.2.0: the shared core, the Claude and Codex adapters, skills and the user's MCP servers, the workspace mode, the stdio host and a deterministic fake provider. Both adapters are verified live (sign-in, isolation of two accounts, tools, questions, interruption, crash recovery), and the Graph editor and the Slides editor run on the library. See [docs/compatibility.md](docs/compatibility.md).
+Version 0.2.2: the shared core, the Claude and Codex adapters, skills and the user's MCP servers, the workspace mode, the stdio host, a deterministic fake provider and the shared React interface `@edukors/ai-ui` (in `packages/ui`). Both adapters are verified live (sign-in, isolation of two accounts, tools, questions, interruption, crash recovery), and the Graph editor and the Slides editor run on the library. See [docs/compatibility.md](docs/compatibility.md).
 
 What is left (the remaining providers, Codex connectors, a bundled Node.js for the Graph editor, live checks on Windows and Linux), the design rules both editors follow and what is out of scope are in [docs/roadmap.md](docs/roadmap.md).
 

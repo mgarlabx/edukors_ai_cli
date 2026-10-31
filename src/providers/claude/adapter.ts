@@ -1,3 +1,4 @@
+import {PROVIDER_CATALOG} from "../../providerCatalog.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -285,7 +286,7 @@ export function createClaudeProvider(options: ClaudeProviderOptions = {}): Provi
   return {
     id: "claude",
     displayName: "Claude",
-    installUrl: "https://claude.com/claude-code",
+    installUrl: PROVIDER_CATALOG[0].url,
 
     async detect(log): Promise<Detection> {
       const found = await findExecutable({
