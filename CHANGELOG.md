@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- `PROVIDER_CATALOG` and `installationCommand(provider, platform)`, exported from the main entry and from `@edukors/ai-cli/settings` (safe for renderers): each provider's name, CLI and official guide, and the install command per platform. The adapters' `installUrl` comes from the catalog.
+- New package `@edukors/ai-ui` 0.1.4 (`packages/ui`): the React 19 interface both editors share (accounts, provider setup, model and effort, usage, conversations, questions, headers), in Portuguese, English and Spanish. See [docs/assistant-interface.md](docs/assistant-interface.md).
+
 ## 0.2.0
 
 - Workspace: `openSession({ workspace: { dir, readDirs, protect, web, shell } })` lets the agent work in a folder with the provider's own file and web tools, and commands where a sandbox confines them; it never writes a protected path and reaches nothing else of the user's. New capabilities `workspace` and `workspaceShell`. Claude: everywhere, commands on macOS and Linux. Codex: macOS, inside the system sandbox. Host: `session.open` takes `workspace`.

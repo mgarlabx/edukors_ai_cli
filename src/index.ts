@@ -55,3 +55,5 @@ export type { ClaudeProviderOptions } from "./providers/claude/adapter.js";
 export { createCodexProvider } from "./providers/codex/adapter.js";
 export type { CodexProviderOptions } from "./providers/codex/adapter.js";
 export { createToolMcpServer, startToolBridge, TOOL_SERVER_NAME } from "./mcp/toolServer.js";
+
+export {PROVIDER_CATALOG, installationCommand} from "./providerCatalog.js";

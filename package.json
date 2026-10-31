@@ -1,6 +1,6 @@
 {
   "name": "@edukors/ai-cli",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Shared integration between EDUKORS editors and installed AI provider CLIs: accounts, sessions, tools and normalized events.",
   "license": "MIT",
   "type": "module",

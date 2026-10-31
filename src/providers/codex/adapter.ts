@@ -1,3 +1,4 @@
+import {PROVIDER_CATALOG} from "../../providerCatalog.js";
 import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { AiCliError, toAiCliError } from "../../errors.js";
@@ -150,7 +151,7 @@ export function createCodexProvider(options: CodexProviderOptions = {}): Provide
   return {
     id: "codex",
     displayName: "Codex",
-    installUrl: "https://developers.openai.com/codex/cli/",
+    installUrl: PROVIDER_CATALOG[1].url,
 
     async detect(log): Promise<Detection> {
       const path = await findExecutable({
